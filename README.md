@@ -49,18 +49,18 @@ Servir como base para testes e desenvolvimento de um sistema de controle para ae
 
 ## Dependências
 
-### by Adafruit
+### Adafruit
 - Adafruit BMP280 Library — v3.0.0
 
-### by Arduino
+### Arduino
 - SPI — incluído no core
 - Wire — incluído no core
 
-### by Espressif Systems
+### Espressif Systems
 - esp_adc_cal — incluído no core
 - esp_task_wdt — incluído no core
 
-### by asukiaaa
+### asukiaaa
 - MPU9250_asukiaaa — v1.5.13
 
 ### Outros
