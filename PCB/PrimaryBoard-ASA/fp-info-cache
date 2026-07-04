@@ -1,0 +1,120 @@
+30176613580423
+myKicadLib
+4Servos
+
+
+0
+12
+12
+myKicadLib
+BMP280
+
+
+0
+6
+6
+myKicadLib
+ConnectorBaterry+BEC
+
+
+0
+4
+4
+myKicadLib
+GPS
+
+
+0
+5
+5
+myKicadLib
+ICM 20948
+
+
+0
+10
+10
+myKicadLib
+Mp2315
+
+
+0
+4
+4
+myKicadLib
+PinSocket_1x05_P2.54mm_Vertical
+Through hole straight socket strip, 1x05, 2.54mm pitch, single row (from Kicad 4.0.7), script generated
+Through hole socket strip THT 1x05 2.54mm single row
+0
+5
+5
+myKicadLib
+SD_Card
+
+
+0
+6
+6
+myKicadLib
+ads1115
+Temperature and humidity module, http://akizukidenshi.com/download/ds/aosong/DHT11.pdf
+Temperature and humidity module
+0
+10
+10
+myKicadLib
+boardToBoard-Battery
+boardToBoard-4pin
+boardToBoard
+0
+3
+3
+myKicadLib
+boardToBoard-spi
+boardToBoard-4pin
+boardToBoard
+0
+4
+4
+myKicadLib
+conectorAntena2.54mm
+Through hole straight socket strip, 1x05, 2.54mm pitch, single row (from Kicad 4.0.7), script generated
+Through hole socket strip THT 1x05 2.54mm single row
+0
+5
+2
+myKicadLib
+gy91
+Temperature and humidity module, http://akizukidenshi.com/download/ds/aosong/DHT11.pdf
+Temperature and humidity module
+0
+8
+8
+myKicadLib
+m3608-module
+
+
+0
+4
+4
+myKicadLib
+myEsp32-S3-Mini
+
+
+0
+18
+18
+myKicadLib
+rf96w
+Low Power Long Range Transceiver Module THT-16 (https://www.hoperf.com/data/upload/portal/20181127/5bfcbea20e9ef.pdf)
+Low Power Long Range Transceiver Module LoRa
+0
+16
+16
+myKicadLib
+tuboPitot
+
+
+0
+3
+3
