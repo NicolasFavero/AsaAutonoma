@@ -4,6 +4,8 @@
 #include "ICM_20948.h"
 #include <Arduino.h>
 
+//Wire.begin(SDA, SCL)  --> main.cpp
+
 class IMU{
     public:
 
@@ -11,7 +13,7 @@ class IMU{
 
         bool begin();
         bool update();
-        void printValues();
+        void print();
         const char* packet();
 
         float getPitch() const;

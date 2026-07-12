@@ -1,6 +1,7 @@
-#include "IMU.h"
+#include "Imu.h"
 #include <Arduino.h>
 #include "math.h"
+//Wire.begin(SDA, SCL)  --> main.cpp
 
 IMU::IMU():imu() {}
 bool IMU::begin() {
@@ -93,7 +94,7 @@ bool IMU::update(){
 
     return true;
 }
-void IMU::printValues(){
+void IMU::print(){
     Serial.print("ROLL:");
     Serial.print(roll, 1);
     Serial.print(",");
