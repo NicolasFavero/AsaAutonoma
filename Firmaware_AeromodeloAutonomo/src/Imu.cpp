@@ -11,7 +11,7 @@ bool IMU::begin() {
 
     if (imu.status != ICM_20948_Stat_Ok) {
         Serial.println("Erro Critico: ICM-20948 nao respondeu em 0x68");
-        while (1);
+        return false;
     }
 
     bool success = true;
