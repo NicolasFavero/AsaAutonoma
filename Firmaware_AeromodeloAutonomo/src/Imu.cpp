@@ -4,6 +4,7 @@
 //Wire.begin(SDA, SCL)  --> main.cpp
 
 IMU::IMU():imu() {}
+
 bool IMU::begin() {
 
     imu.begin(Wire, ADDRESS);
@@ -32,11 +33,27 @@ bool IMU::begin() {
     Serial.println("Filtro de Kalman (DMP) pronto. Movimente o ICM20948...");
     return true;
 }
+
 bool IMU::update(){
 
     if (!imu.dataReady()) {
         return false;
     }
+
+    imu.getAGMT();
+
+    accX = imu.accX();
+    accY = imu.accY();
+    accZ = imu.accZ();
+
+    gyroX = imu.gyrX();
+    gyroY = imu.gyrY();
+    gyroZ = imu.gyrZ();
+
+    magX = imu.magX();
+    magY = imu.magY();
+    magZ = imu.magZ();
+
 
     icm_20948_DMP_data_t dmpData;
     imu.readDMPdataFromFIFO(&dmpData);
@@ -94,6 +111,7 @@ bool IMU::update(){
 
     return true;
 }
+
 void IMU::print(){
     Serial.print("ROLL:");
     Serial.print(roll, 1);
@@ -106,9 +124,23 @@ void IMU::print(){
     Serial.print("YAW:");
     Serial.println(yaw, 1);
 }
+
 float IMU::getPitch() const {return pitch;}
 float IMU::getRoll() const {return roll;}
 float IMU::getYaw() const {return yaw;}
+
+float IMU::getAccX() const {return accX;}
+float IMU::getAccY() const {return accY;}
+float IMU::getAccZ() const {return accZ;}
+
+float IMU::getGyroX() const {return gyroX;}
+float IMU::getGyroY() const {return gyroY;}
+float IMU::getGyroZ() const {return gyroZ;}
+
+float IMU::getMagX() const {return magX;}
+float IMU::getMagY() const {return magY;}
+float IMU::getMagZ() const {return magZ;}
+
 const char* IMU::packet(){
 
     snprintf(

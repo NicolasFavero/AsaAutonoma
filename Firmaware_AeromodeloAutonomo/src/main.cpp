@@ -6,8 +6,12 @@
 #include "Servo.h"
 #include "SdLogger.h"
 #include "RF96W.h"
+#include "ADS1X15.h"
+#include "Telemetry.h"
 //  OBS CONFERIR SE OS EIXOS DO MAGNOMETROS JÁ ESTÃO SENDO CORRIGIDOS NA LIB ICM20948 OU SE ESTOU CERTO NO CÓDIGO, O YAW ESTÁ RUIM AINDA
 // ou yaw pelo gps
+
+static constexpr float BATTERY_LIMIT = 6.0;
 
 //I2C
 static constexpr uint8_t SDA_PIN = 3; 
@@ -53,7 +57,7 @@ static constexpr uint16_t PREAMBLE_LENGTH = 8;
 static constexpr uint8_t GPS_TX = 13;
 
 //========================================================================
-
+ADS ads;
 IMU imu;
 BMP280 bmp;
 Led led;
@@ -76,7 +80,13 @@ LoRa lora(
     POWER,
     PREAMBLE_LENGTH
 );
-
+Telemetry telemetry(imu, gps, bmp, ads);
+//=======================================================================
+  bool isLowPowerModeEnabled(){
+    if(ads.batteryLevel() < BATTERY_LIMIT){return true;}
+    else{return false;}
+  }
+  bool powerMode = isLowPowerModeEnabled();
 //=======================================================================
 
 void setup(){
@@ -90,14 +100,15 @@ void setup(){
   led.white();
   //led.white();
 
-  while(!imu.begin()){led.red();}
-  while(!bmp.begin()){led.red();}
-  while(!gps.begin()){led.red();}
+  //while(!imu.begin()){led.red();}
+  //while(!bmp.begin()){led.red();}
+  //while(!gps.begin()){led.red();}
+  //while(!ads.begin()){led.red();}
   while(!lora.begin()){led.red();}
 
-  while(!elevator.begin()){led.red();}
-  while(!leftAlieron.begin()){led.red();}
-  while(!rightAlieron.begin()){led.red();}
+  //while(!elevator.begin()){led.red();}
+  //while(!leftAlieron.begin()){led.red();}
+  //while(!rightAlieron.begin()){led.red();}
 
 
   while(!sd.begin()) {Serial.println("SD FAIL"); led.red();}
@@ -108,27 +119,38 @@ void setup(){
 
 }
 
-unsigned long old = millis();
+unsigned long oldMillis = millis();
 
 void loop(){
 
-  bmp.update();
-  imu.update();
+  gps.update()? (void)0 : led.blue();
+  bmp.update()? (void)0 : led.red();
+  imu.update()? (void)0 : led.red();
 
-  if(millis() - old > 1000){
+  powerMode = isLowPowerModeEnabled();
+  telemetry.update();
 
-    bmp.print();
-    imu.print();
+  if(!powerMode){
+    if(millis() - oldMillis > 1E3){
 
-    if(lora.receive()){lora.print();}
-    lora.send("OLA MUNDO");
-
-    elevator.write(90);
-    leftAlieron.write(90);
-    rightAlieron.write(90);
+      //bmp.print();
+      //imu.print();
+      Serial.println(telemetry.getJson());
+      lora.send(telemetry.getLoraPacket(powerMode));
+      sd.saveLine(telemetry.getCsv());
+    }
   }
-
-
-  //gps.update()?  gps.print() : led.red();
+    else{
+      if(millis() - oldMillis > 1E4){
+        
+        lora.send(telemetry.getLoraPacket(powerMode));
+        oldMillis = millis();
+      }
+    }
 
 }
+
+
+
+
+

@@ -39,6 +39,11 @@ bool GPS::update(){
         altitude = gps.altitude.meters();
     }
 
+    if (gps.course.isValid())
+    {
+        course = gps.course.deg();
+    }
+
     if (gps.satellites.isValid())
     {
         satellites = gps.satellites.value();
@@ -64,6 +69,7 @@ bool GPS::isValid() const {return valid;}
 double GPS::getLatitude() const {return latitude;}
 double GPS::getLongitude() const {return longitude;}
 double GPS::getAltitude() const {return altitude;}
+double GPS::getCourse() const {return course;}
 uint8_t GPS::getSatellites() const {return satellites;}
 uint8_t GPS::getHour() const {return hour;}
 uint8_t GPS::getMinute() const {return minute;}
@@ -83,6 +89,9 @@ void GPS::print(){
 
     Serial.print(" ALT=");
     Serial.print(altitude, 1);
+
+    Serial.print(" COURSE=");
+    Serial.print(course, 1);
 
     Serial.print(" SAT=");
     Serial.print(satellites);

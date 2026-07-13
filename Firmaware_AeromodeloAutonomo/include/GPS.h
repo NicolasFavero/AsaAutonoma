@@ -17,6 +17,8 @@ public:
     double getLongitude() const;
     double getAltitude() const;
 
+    double getCourse() const;
+
     uint8_t getSatellites() const;
 
     uint8_t getHour() const;
@@ -37,6 +39,8 @@ private:
     double latitude = 0.0;
     double longitude = 0.0;
     double altitude = 0.0;
+
+    double course = 0.0f;
 
     uint8_t hour = 0;
     uint8_t minute = 0;

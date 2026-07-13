@@ -20,12 +20,37 @@ class IMU{
         float getRoll() const;
         float getYaw() const;
 
+        float getAccX() const;
+        float getAccY() const;
+        float getAccZ() const;
+
+        float getGyroX() const;
+        float getGyroY() const;
+        float getGyroZ() const;
+
+        float getMagX() const;
+        float getMagY() const;
+        float getMagZ() const;
+
     private:
         ICM_20948_I2C imu;
 
         float pitch = 0.0f;
         float roll  = 0.0f;
         float yaw   = 0.0f; 
+
+        float accX = 0.0f;
+        float accY = 0.0f;
+        float accZ = 0.0f;
+
+        float gyroX = 0.0f;
+        float gyroY = 0.0f;
+        float gyroZ = 0.0f;
+
+        float magX = 0.0f;
+        float magY = 0.0f;
+        float magZ = 0.0f;
+        
         char packetBuffer[32];
         unsigned long lastUpdateMicros = 0;
 
