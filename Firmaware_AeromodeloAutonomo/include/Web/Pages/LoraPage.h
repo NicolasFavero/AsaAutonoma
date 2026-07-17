@@ -1,0 +1,70 @@
+#pragma once
+#include <Arduino.h>
+
+namespace Web::Pages
+{
+
+inline constexpr char LORA_PAGE[] PROGMEM = R"rawliteral(
+
+<section>
+
+<h2>Configuração LoRa</h2>
+
+<div class="card">
+
+<table>
+
+<tr>
+<td>Frequência (MHz)</td>
+<td><input id="frequency"></td>
+</tr>
+
+<tr>
+<td>Bandwidth (kHz)</td>
+<td><input id="bandwidth"></td>
+</tr>
+
+<tr>
+<td>Spreading Factor</td>
+<td><input id="spreadingFactor"></td>
+</tr>
+
+<tr>
+<td>Coding Rate</td>
+<td><input id="codingRate"></td>
+</tr>
+
+<tr>
+<td>Potência (dBm)</td>
+<td><input id="power"></td>
+</tr>
+
+<tr>
+<td>Sync Word (HEX)</td>
+<td><input id="syncWord"></td>
+</tr>
+
+<tr>
+<td>Preamble</td>
+<td><input id="preambleLength"></td>
+</tr>
+
+</table>
+
+</div>
+
+<br>
+
+<button
+class="primary"
+id="saveLora">
+
+Salvar Configuração
+
+</button>
+
+</section>
+
+)rawliteral";
+
+}

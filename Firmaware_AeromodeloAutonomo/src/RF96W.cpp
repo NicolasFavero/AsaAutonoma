@@ -6,14 +6,7 @@ LoRa::LoRa(
     uint8_t cs,
     uint8_t dio0,
     uint8_t rst,
-
-    float frequency,
-    float bandwidth,
-    uint8_t spreadingFactor,
-    uint8_t codingRate,
-    uint8_t syncWord,
-    int8_t power,
-    uint16_t preambleLength
+    const LoraConfig& config
 )
 :
 module(
@@ -23,35 +16,30 @@ module(
     RADIOLIB_NC
 ),
 radio(&module),
-
-frequency(frequency),
-bandwidth(bandwidth),
-spreadingFactor(spreadingFactor),
-codingRate(codingRate),
-syncWord(syncWord),
-power(power),
-preambleLength(preambleLength)
+config(config)
 {
     packetBuffer[0] = '\0';
 }
 
-bool LoRa::begin() {
-
-    int state = radio.begin(
-        frequency,
-        bandwidth,
-        spreadingFactor,
-        codingRate,
-        syncWord,
-        power,
-        preambleLength
+bool LoRa::begin()
+{
+    uint8_t state = radio.begin(
+        config.frequency,
+        config.bandwidth,
+        config.spreadingFactor,
+        config.codingRate,
+        config.syncWord,
+        config.power,
+        config.preambleLength
     );
 
-    if (state != RADIOLIB_ERR_NONE) {
+    if(state != RADIOLIB_ERR_NONE)
         return false;
-    }
 
-    radio.setDio0Action(setFlag, RISING);
+    radio.setDio0Action(
+        setFlag,
+        RISING
+    );
 
     state = radio.startReceive();
 
@@ -117,4 +105,43 @@ void LoRa::print(){
 
     Serial.print("SNR: ");
     Serial.println(getSNR());
+}
+void LoRa::setConfig(
+    const LoraConfig& newConfig)
+{
+    config = newConfig;
+}
+const LoraConfig&
+LoRa::getConfig() const
+{
+    return config;
+}
+bool LoRa::reconfigure(
+    const LoraConfig& newConfig)
+{
+    radio.standby();
+
+    config = newConfig;
+
+    int state = radio.begin(
+        config.frequency,
+        config.bandwidth,
+        config.spreadingFactor,
+        config.codingRate,
+        config.syncWord,
+        config.power,
+        config.preambleLength
+    );
+
+    if(state != RADIOLIB_ERR_NONE)
+        return false;
+
+    radio.setDio0Action(
+        setFlag,
+        RISING
+    );
+
+    state = radio.startReceive();
+
+    return state == RADIOLIB_ERR_NONE;
 }

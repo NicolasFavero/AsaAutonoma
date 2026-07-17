@@ -1,104 +1,112 @@
+// Arduino
 #include "Arduino.h"
-#include "IMU.h"
-#include "BMP280.h"
-#include "GPS.h"
-#include "Led.h"
-#include "Servo.h"
-#include "SdLogger.h"
-#include "RF96W.h"
-#include "ADS1X15.h"
-#include "Telemetry.h"
+
+// Config
+#include "Pins.h"
+#include "ServomotorConfig.h"
 #include "DataTypes.h"
+#include "CurrentConfig.h"
+
+// Drivers
+#include "IMU.h"
+#include "GPS.h"
+#include "BMP280.h"
+#include "ADS1X15.h"
+
+// Communication
+#include "RF96W.h"
+#include "WiFiAP.h"
+
+// Storage
+#include "SdLogger.h"
+#include "PreferencesManager.h"
+
+// Control
 #include "PID.h"
+#include "Servo.h"
+
+// Telemetry
+#include "Telemetry.h" //ALTEREI PRA DEBUG     float pitch = imuValid ? attitude.pitch : 0.0f; LEMBRAR DE VOLTAR ATRAS DEPOIS!!!!!!!!!!!!!!!
+
+// Debug
+#include "Led.h"
 //=======================================================================================================================================================
-//===================================================================DEFINITIONS=========================================================================
 //OTHERS
-unsigned long oldMillis = millis();
+unsigned long lastTelemetryMillis = 0;
+volatile bool newOffsetsAvailable = false;
 
-//BATTERY
-bool powerMode = false;
-static constexpr float BATTERY_LIMIT = 6.0;
-
-//I2C
-static constexpr uint8_t SDA_PIN = 3; 
-static constexpr uint8_t SCL_PIN = 2;
-
-//Servos
-static constexpr uint8_t elevatorPin = 12;
-static constexpr uint8_t leftAlieronPin = 11;
-static constexpr uint8_t rightAlieronPin = 10;
-//static constexpr uint8_t rudderPin = 43;
-
-static constexpr uint8_t elevatorChannel = 0;
-static constexpr uint8_t leftAlieronChannel = 1;
-static constexpr uint8_t rightAlieronChannel = 2;
-//static constexpr uint8_t rudderChannel = 3;
-
-static constexpr uint8_t servoFrequency = 50;
-static constexpr uint8_t servoResolution = 14;
-
-//SPI
-static constexpr uint8_t SCK_PIN = 5;
-static constexpr uint8_t MOSI_PIN = 6;
-static constexpr uint8_t MISO_PIN = 7;
-
-//SD
-static constexpr uint8_t CS_SdPin = 1;
-
-//LoRa
-static constexpr uint8_t CS_RadioPin = 4;
-static constexpr uint8_t DIO0_RadioPin = 8;
-static constexpr uint8_t RESET_RadioPin = 9;
-//static constexpr uint8_t BUSY_RadioPin = 44;
-
-static constexpr float FREQUENCY = 915.0f;
-static constexpr float BANDWIDTH = 125.0f;
-static constexpr uint8_t SPREADING_FACTOR = 10;
-static constexpr uint8_t CODING_RATE = 5;
-static constexpr uint8_t SYNC_WORD = 0x12;
-static constexpr int8_t POWER = 20;
-static constexpr uint16_t PREAMBLE_LENGTH = 8;
-
-//GPS
-static constexpr uint8_t GPS_TX = 13;
-//=================================================================DEFINITIONS===========================================================================
+//==================================================================STRUCTS===============================================================================
+ImuOffsets currentOffsets; 
+SystemConfig systemConfig;
+SystemStatus systemStatus;
 //========================================================================================================================================================
 //==================================================================CLASSES==============================================================================
-ADS ads;
+// Drivers
 IMU imu;
+ADS ads;
 BMP280 bmp;
-Led led;
-GPS gps(GPS_TX);
-SdLogger sd(CS_SdPin);
-Servo elevator(elevatorPin, elevatorChannel, servoFrequency, servoResolution);
-Servo leftAlieron(leftAlieronPin, leftAlieronChannel, servoFrequency, servoResolution);
-Servo rightAlieron(rightAlieronPin, rightAlieronChannel, servoFrequency, servoResolution);
-//Servo rudder(rudderPin, rudderChannel, servoFrequency, servoResolution); 
-LoRa lora(CS_RadioPin, DIO0_RadioPin, RESET_RadioPin, FREQUENCY, BANDWIDTH, SPREADING_FACTOR, CODING_RATE, SYNC_WORD, POWER, PREAMBLE_LENGTH);
+GPS gps(Pins::GPS_TX);
+
+// Communication
+LoRa lora(Pins::LORA_CS, Pins::LORA_DIO0, Pins::LORA_RESET, systemConfig.lora);
+WifiAP wifi;
+
+// Storage
+SdLogger sd(Pins::SD_CS);
+PreferencesManager nvs;
+
+// Control
+PID pid;
+
+// Actuators
+Servo elevator    (Pins::ELEVATOR,      ServoConfig::Channel::ELEVATOR,      ServoConfig::FREQUENCY, ServoConfig::RESOLUTION);
+Servo leftAlieron (Pins::LEFT_AILERON,  ServoConfig::Channel::LEFT_AILERON,  ServoConfig::FREQUENCY, ServoConfig::RESOLUTION);
+Servo rightAlieron(Pins::RIGHT_AILERON, ServoConfig::Channel::RIGHT_AILERON, ServoConfig::FREQUENCY, ServoConfig::RESOLUTION);
+//Servo rudder    (Pins::RUDDER,        ServoConfig::Channel::RUDDER,        ServoConfig::FREQUENCY, ServoConfig::RESOLUTION); 
+
+// Telemetry
 Telemetry telemetry(gps, bmp, ads);
 
+//Visual Debug
+Led led;
+
+//========================================================================================================================================================
+//==============================================================FREEERTOS QUEUES===============================================================================
 QueueHandle_t attitudeQueue;
 QueueHandle_t navigationQueue;
-//==================================================================CLASSES===============================================================================
+portMUX_TYPE offsetMux = portMUX_INITIALIZER_UNLOCKED;
 //========================================================================================================================================================
 //=================================================================PROTOTYPES=============================================================================
-bool isLowPowerModeEnabled();
+// TASKS
 void taskControl(void *pv);
-void taskTelemetry(void *pv);
-void PID(ServoPositions& angle, bool gpsData = false);
-//=================================================================PROTOTYPES=============================================================================
+void taskData(void *pv);
+
+// TASK CONTROL HELPERS
+bool readAttitudeData(AttitudeData& attitude);
+
+// TASK DATA HELPERS
+void sendNavigationData(NavigationData& navigationData);
+void handleOutputs();
+void handleWifi(const AttitudeData& attitude, const NavigationData& navigationData);
+
+// GENERAL HELPERS
+bool isLowPowerModeEnabled();
+
 //=========================================================================================================================================================
 //===================================================================SETUP=================================================================================
 void setup(){
   Serial.begin(115200);
   Serial.println("Beginning...");
-  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.begin(Pins::SDA, Pins::SCL);
   Wire.setClock(400000); 
 
-  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN);
+  SPI.begin(Pins::SCK, Pins::MISO, Pins::MOSI);
 
   led.white();
   //led.white();
+
+  nvs.loadSystem(systemConfig);
+  nvs.loadOffsets(currentOffsets);
 
   while(!imu.begin()){led.red();}
   while(!bmp.begin()){led.red();}
@@ -113,9 +121,8 @@ void setup(){
 
   while(!sd.begin()) {Serial.println("SD FAIL"); led.red();}
   while(!sd.createFile()) {Serial.println("ERRO CRIAR ARQUIVO"); led.red();}
-  while(!sd.saveLine("tempo_ms,altitude,pitch,roll,yaw")){Serial.println("Erro aao criar Header"); led.red();}
+  while(!sd.saveLine(telemetry.getCsvHeader())){Serial.println("Erro aao criar Header"); led.red();}
 
-  powerMode = isLowPowerModeEnabled();
 
   attitudeQueue = xQueueCreate(1, sizeof(AttitudeData));
   navigationQueue = xQueueCreate(1, sizeof(NavigationData));
@@ -126,9 +133,22 @@ void setup(){
       delay(500);
     }
   }
+  if(systemConfig.wifiEnabled)
+  {
+    if(wifi.begin())
+    {
+        wifi.print();
+
+        wifi.setSystemConfig(systemConfig);
+
+        wifi.setOffsets(currentOffsets);
+    }
+  }
+
+  lastTelemetryMillis = millis();
 
   led.green();
-
+  
   xTaskCreatePinnedToCore(
     taskControl,
     "Control",
@@ -139,7 +159,7 @@ void setup(){
     0
   );
   xTaskCreatePinnedToCore(
-    taskTelemetry,
+    taskData,
     "Data",
     10000,
     NULL,
@@ -147,6 +167,7 @@ void setup(){
     NULL,
     1
   );
+
 
 }
 //===================================================================SETUP==================================================================================
@@ -162,13 +183,36 @@ void taskControl(void *pv){
   const TickType_t period = pdMS_TO_TICKS(5); //200HZ
 
   while(true){
-      bool useNewValues = true;
-  //=====================FOR SEND================
+    bool useNewValues = true;
     static AttitudeData attitudeData;
+    static NavigationData nav; 
+    static ServoPositions angle;
+    static ImuOffsets localOffsets; 
+  //===================TO  ATTITUDE==============
+    if(systemConfig.flightMode == FlightMode::CONFIG && newOffsetsAvailable){
+      portENTER_CRITICAL(&offsetMux);
 
-    attitudeData.pitch = imu.getPitch();
-    attitudeData.roll = imu.getRoll();
-    attitudeData.yaw = imu.getYaw();
+      localOffsets = currentOffsets;
+
+      newOffsetsAvailable = false;
+
+      portEXIT_CRITICAL(&offsetMux);
+    }
+
+    imu.update();
+
+    pid.setAngles(angle, attitudeData, nav, useNewValues); 
+
+
+    elevator.write(angle.elevator);
+    leftAlieron.write(angle.leftAlieron);
+    rightAlieron.write(angle.rightAlieron);
+
+  //===================TO  ATTITUDE==============
+  //=====================FOR SEND================
+    attitudeData.pitch = imu.getPitch() - localOffsets.pitch;
+    attitudeData.roll = imu.getRoll() - localOffsets.roll;
+    attitudeData.yaw = imu.getYaw() - localOffsets.yaw;
 
     attitudeData.accX = imu.getAccX();
     attitudeData.accY = imu.getAccY();
@@ -185,93 +229,191 @@ void taskControl(void *pv){
     xQueueOverwrite(attitudeQueue, &attitudeData);
   //=====================FOR SEND================
   //====================TO  RECEIVE==============
-    static NavigationData nav;
-
-    if(xQueueReceive(navigationQueue,&nav,0)){/*PID.updateNavigation(nav)*/; useNewValues = true;}
+    if(xQueueReceive(navigationQueue,&nav,0)){useNewValues = true;}
   //====================TO  RECEIVE==============
-
-    static ServoPositions angle;
-
-    imu.update();
-
-    //PID(angle, attitudeData, nav, useNewValues); //updates the angles;
-
-    elevator.write(angle.elevator);
-    leftAlieron.write(angle.leftAlieron);
-    rightAlieron.write(angle.rightAlieron);
-
-
+  
     vTaskDelayUntil(&lastWake,period);
   }
 }
 //=================================================================TASK AT CORE 0===========================================================================
 //==========================================================================================================================================================
 //=================================================================TASK AT CORE 1===========================================================================
-void taskTelemetry(void *pv){
+void taskData(void *pv){
 
   TickType_t lastWake = xTaskGetTickCount();
   const TickType_t period = pdMS_TO_TICKS(100); //10HZ
+  static bool isImuValid = false;
 
   while(true){
-    bool isImuValid = false;
 
-    bmp.update();
-    gps.update();
-
-    //====================TO  RECEIVE==============
+    static NavigationData navigationData;
     static AttitudeData attitude;
-    if(xQueueReceive(attitudeQueue, &attitude, 0)){telemetry.setAttitudeData(attitude); isImuValid = true;}
-    //====================TO  RECEIVE==============
+    
+    bmp.update();
+
+    if(gps.update()){led.green(); /*Serial.println("GPS Atualizado");*/} 
+    else{led.blue();}
+
+    isImuValid = readAttitudeData(attitude);
 
     telemetry.update(isImuValid);
-    powerMode = isLowPowerModeEnabled();
+      
+    sendNavigationData(navigationData);
 
-    //=====================FOR SEND================
-    static NavigationData navigationData;
+    handleOutputs();//Send LoRa and register in SD_Card
 
-    bool gpsValid = gps.isValid();
-
-    navigationData.latitude = gpsValid ? gps.getLatitude() : 0;
-    navigationData.longitude = gpsValid ? gps.getLongitude() : 0;
-    navigationData.gpsAltitude = gpsValid ? gps.getAltitude() : 0;
-    navigationData.course = gpsValid ? gps.getCourse() : 0;
-
-    navigationData.baroAltitude = bmp.getRawAltitude();
-    navigationData.temperature = bmp.getTemperature();
-
-    navigationData.battery = ads.batteryLevel();
-
-    xQueueOverwrite(navigationQueue, &navigationData);
-    //=====================FOR SEND================
-
-    //it runs when the BATTERY_LEVEL its HIGH
-    if(!powerMode){
-
-      if(millis() - oldMillis > 1E3){
-
-        lora.send(telemetry.getLoraPacket(powerMode));
-        sd.saveLine(telemetry.getCsv());
-
-        oldMillis = millis();
-      }
+    if(systemConfig.flightMode == FlightMode::CONFIG){
+      handleWifi(attitude, navigationData);
     }
-    //it runs when the BATTERY_LEVEL its LOW
-      else{        
-        if(millis() - oldMillis > 2E4){
-          
-          lora.send(telemetry.getLoraPacket(powerMode));
-        
-          oldMillis = millis();
-        }
-      }
-      vTaskDelayUntil(&lastWake, period);
+
+    vTaskDelayUntil(&lastWake, period);
   }
 }
 //=================================================================TASK AT CORE 1===========================================================================
 //==========================================================================================================================================================
 //================================================================OTHERS FUNCTIONS==========================================================================
-bool isLowPowerModeEnabled(){
+void handleWifi(const AttitudeData& attitude, const NavigationData& navigationData){
+    if(!systemConfig.wifiEnabled)
+        return;
 
-    if(ads.batteryLevel() < BATTERY_LIMIT){return true;}
-    else{return false;}
-  }
+    wifi.update();
+
+    wifi.setAttitude(attitude);
+
+    wifi.setNavigation(navigationData);
+
+    wifi.setSystemStatus(systemStatus);
+
+    switch(wifi.getPendingEvent())
+    {
+        case SystemEvent::NONE:
+            return;
+
+        case SystemEvent::OFFSET_CHANGED:
+
+            portENTER_CRITICAL(&offsetMux);
+
+            currentOffsets = wifi.getOffsets();
+
+            newOffsetsAvailable = true;
+
+            portEXIT_CRITICAL(&offsetMux);
+
+            nvs.saveOffsets(currentOffsets);
+
+            wifi.setOffsets(currentOffsets);
+
+            break;
+
+        case SystemEvent::SYSTEM_CHANGED:
+
+            systemConfig = wifi.getSystemConfig();
+
+            nvs.saveSystem(systemConfig);
+
+            wifi.setSystemConfig(systemConfig);
+
+            break;
+
+        case SystemEvent::LORA_CHANGED:
+
+            systemConfig = wifi.getSystemConfig();
+
+            nvs.saveLora(systemConfig.lora);
+
+            lora.reconfigure(systemConfig.lora);
+
+            wifi.setSystemConfig(systemConfig);
+
+            break;
+
+        case SystemEvent::START_FLIGHT:
+
+            systemConfig.flightMode =
+                FlightMode::FLIGHT;
+
+            wifi.setFlightMode(
+                systemConfig.flightMode
+            );
+
+            break;
+
+        case SystemEvent::RESTART:
+
+            ESP.restart();
+
+            return;
+    }
+
+    wifi.clearPendingEvent();
+}
+void handleOutputs(){
+
+    bool powerMode = isLowPowerModeEnabled();
+      //it runs when the BATTERY_LEVEL its HIGH
+    if(!powerMode){
+
+      if(millis() - lastTelemetryMillis > systemConfig.telemetryPeriodMs){ //The real time to loop this is 1E3 seconds? because of de vTaskDelay
+
+        lastTelemetryMillis = millis();
+
+        lora.send(telemetry.getLoraPacket(powerMode));
+      
+        if(!sd.saveLine(telemetry.getCsv())){Serial.println("Error ao gravar SD....");}
+
+        Serial.println(telemetry.getJson());
+      }
+    }
+    //it runs when the BATTERY_LEVEL its LOW
+      else{        
+        if(millis() - lastTelemetryMillis > systemConfig.lowBatteryTelemetryPeriodMs){ //1E4ms
+          
+          lastTelemetryMillis = millis();
+
+          lora.send(telemetry.getLoraPacket(powerMode));
+        }
+      }
+}
+void sendNavigationData(NavigationData& navigationData){
+    
+  const bool gpsValid = gps.isValid();
+
+    navigationData.latitude =
+        gpsValid ? gps.getLatitude() : 0.0;
+
+    navigationData.longitude =
+        gpsValid ? gps.getLongitude() : 0.0;
+
+    navigationData.gpsAltitude =
+        gpsValid ? gps.getAltitude() : 0.0f;
+
+    navigationData.course =
+        gpsValid ? gps.getCourse() : 0.0f;
+
+    navigationData.satellites =
+        gpsValid ? gps.getSatellites() : 0;
+
+    navigationData.baroAltitude =
+        bmp.getRawAltitude();
+
+    navigationData.temperature =
+        bmp.getTemperature();
+
+    navigationData.battery =
+        ads.batteryLevel();
+
+    xQueueOverwrite(
+        navigationQueue,
+        &navigationData
+    );
+}
+bool readAttitudeData(AttitudeData& attitude){
+    return xQueueReceive(
+        attitudeQueue,
+        &attitude,
+        0
+    ) == pdTRUE;
+}
+bool isLowPowerModeEnabled(){
+    return ads.batteryLevel() < systemConfig.batteryLimit;
+}

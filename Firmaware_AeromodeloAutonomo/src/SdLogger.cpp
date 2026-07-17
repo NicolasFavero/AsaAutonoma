@@ -50,18 +50,56 @@ bool SdLogger::openFile() {
     return true;
 }
 
+bool SdLogger::reopenCurrentFile() {
+
+    if (fileOpen) {
+        file.close();
+    }
+
+    fileOpen = false;
+
+    if (!sd.begin(csPin, SD_SCK_MHZ(20))) {
+        return false;
+    }
+
+    if (!file.open(
+            currentFile,
+            O_WRITE | O_APPEND)) {
+        return false;
+    }
+
+    fileOpen = true;
+    return true;
+}
+
 bool SdLogger::saveLine(const char* line) {
 
     if (!fileOpen) {
         return false;
     }
 
-    file.println(line);
+    if (!file.println(line)) {
+
+        if (!reopenCurrentFile()) {
+            return false;
+        }
+
+        if (!file.println(line)) {
+            return false;
+        }
+    }
 
     syncCounter++;
 
     if (syncCounter >= SYNC_INTERVAL) {
-        file.sync();
+
+        if (!file.sync()) {
+
+            if (!reopenCurrentFile()) {
+                return false;
+            }
+        }
+
         syncCounter = 0;
     }
 

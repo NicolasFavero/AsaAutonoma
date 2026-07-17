@@ -34,4 +34,5 @@ private:
 
     bool openFile();
     void generateFileName();
+    bool reopenCurrentFile();
 };

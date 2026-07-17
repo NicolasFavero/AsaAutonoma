@@ -75,6 +75,6 @@ void PID::setAngles(ServoPositions& angle, AttitudeData& attitudeData, Navigatio
     //================ SERVO =================
     angle.elevator =constrain(neutral + outputPitch, 0, 180);
     angle.leftAlieron =constrain(neutral + outputRoll, 0, 180);
-    angle.rightAlieron = constrain(neutral - outputRoll, 0 ,180);
+    angle.rightAlieron = constrain(neutral + outputRoll, 0 ,180);
 
 }

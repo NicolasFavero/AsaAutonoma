@@ -1,26 +1,25 @@
 #pragma once
 #include <Arduino.h>
 #include <RadioLib.h>
+#include "DataTypes.h" //only to use Struct LoraConfig
 
 class LoRa {
 public:
 
     LoRa(
-        uint8_t cs,
-        uint8_t dio0,
-        uint8_t rst,
-
-        float frequency = 915.0f,
-        float bandwidth = 125.0f,
-        uint8_t spreadingFactor = 10,
-        uint8_t codingRate = 5,
-        uint8_t syncWord = 0x12,
-        int8_t power = 20,
-        uint16_t preambleLength = 8
-  
+    uint8_t cs,
+    uint8_t dio0,
+    uint8_t rst,
+    const LoraConfig& config
     );
 
     bool begin();
+
+    void setConfig(const LoraConfig& newConfig);
+
+    const LoraConfig&getConfig() const;
+
+    bool reconfigure(const LoraConfig& newConfig);
 
     bool send(const char* msg);
 
@@ -36,22 +35,14 @@ public:
 
 private:
 
+    LoraConfig config;
+
     static void setFlag();
 
     inline static volatile bool packetReceived = false;
 
     Module module;
     SX1276 radio;
-
-    float frequency;
-    float bandwidth;
-
-    uint8_t spreadingFactor;
-    uint8_t codingRate;
-    uint8_t syncWord;
-
-    int8_t power;
-    uint16_t preambleLength;
 
     float rssi = 0.0f;
     float snr  = 0.0f;

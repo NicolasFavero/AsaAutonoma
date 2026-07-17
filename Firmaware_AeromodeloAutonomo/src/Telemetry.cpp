@@ -20,7 +20,8 @@ void Telemetry::buildJson(bool imuValid)
 
     bool gpsOk = gps.isValid();
 
-    float pitch = imuValid ? attitude.pitch : 0.0f;
+    //float pitch = imuValid ? attitude.pitch : 0.0f;
+    float pitch = attitude.pitch;
     float roll  = imuValid ? attitude.roll  : 0.0f;
     float yaw   = imuValid ? attitude.yaw   : 0.0f;
 
