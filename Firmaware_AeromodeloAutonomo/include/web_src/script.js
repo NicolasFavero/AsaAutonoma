@@ -243,52 +243,78 @@ function initializePage(page){
     );
 
     $("zeroPitch")?.addEventListener(
-    "click",
-      () => valueField(
-        "pitchOffset",
-        $("pitchNow").textContent
-      )
-   );
+        "click",
+        () => tareAxis("pitch")
+    );
 
     $("zeroRoll")?.addEventListener(
         "click",
-        () => valueField(
-            "rollOffset",
-            $("rollNow").textContent
-        )
+        () => tareAxis("roll")
     );
 
     $("zeroYaw")?.addEventListener(
         "click",
-        () => valueField(
-            "yawOffset",
-            $("yawNow").textContent
-        )
+        () => tareAxis("yaw")
     );
 
     $("saveOffsets")?.addEventListener(
         "click",
-        () => save("offset")
+        async () => {
+            await save("offset");
+
+            // O offset novo so passa a valer depois do firmware
+            // processar o evento (loop de ~100ms) -- espera um
+            // pouco e atualiza a leitura exibida, pra proxima tara
+            // ja partir de um valor fresco em vez do antigo.
+            setTimeout(loadStatus, 300);
+        }
     );
 
     break;
 
-    case "system":
-      loadConfig();
-      $("saveSystem")?.addEventListener("click", () => save("system"));
-      break;
+    case "pid":
 
-    case "lora":
-      loadConfig();
-      $("saveLora")?.addEventListener("click", () => save("lora"));
-      break;
+    loadConfig();
 
-    case "flight":
-      loadStatus();
-      $("startFlight")?.addEventListener("click", startFlight);
-      $("restartESP")?.addEventListener("click", restartESP);
-      break;
-  }
+    $("savePid")?.addEventListener(
+        "click",
+        () => save("pid")
+    );
+
+    break;
+    }
+}
+let tareBusy = false;
+async function tareAxis(axis){
+    // Busca um /api/status fresco na hora do clique: o offset
+    // realmente ativo no firmware e a leitura sob esse mesmo
+    // offset vem do MESMO pacote, entao o calculo nunca soma em
+    // cima de um clique anterior nem ignora o offset atual --
+    // ele sempre recalcula o angulo bruto do zero:
+    // bruto = offsetAtivoNoFirmware + leituraAtualSobEsseOffset.
+    //
+    // tareBusy trava cliques repetidos enquanto uma tara ainda
+    // esta em andamento (evita disparar varias buscas ao mesmo
+    // tempo se clicar rapido demais).
+    if(tareBusy) return;
+    tareBusy = true;
+
+    try{
+        const data = await GET_JSON("/api/status");
+
+        const offsetKey = axis + "Offset";
+        const bruto = Number(data[offsetKey] ?? 0) + Number(data[axis] ?? 0);
+
+        valueField(axis + "Offset", bruto.toFixed(2));
+
+        fillStatus(data);
+    }
+    catch(error){
+        alertError(error);
+    }
+    finally{
+        tareBusy = false;
+    }
 }
 /* ---------- Console ---------- */
 
@@ -443,6 +469,18 @@ const CONFIG_FIELDS = {
   rollOffset: "rollOffset",
   yawOffset: "yawOffset",
 
+  pitchKp: "pitchKp",
+  pitchKi: "pitchKi",
+  pitchKd: "pitchKd",
+
+  rollKp: "rollKp",
+  rollKi: "rollKi",
+  rollKd: "rollKd",
+
+  yawKp: "yawKp",
+  yawKi: "yawKi",
+  yawKd: "yawKd",
+
   batteryLimit: "batteryLimit",
 
   telemetryPeriod: "telemetryMs",
@@ -491,6 +529,14 @@ const SAVE_FORMS = {
     url: "/api/offsets",
     fields: { pitch:"pitchOffset", roll:"rollOffset", yaw:"yawOffset" },
   },
+  pid: {
+    url: "/api/pid",
+    fields: {
+      pitchKp:"pitchKp", pitchKi:"pitchKi", pitchKd:"pitchKd",
+      rollKp:"rollKp", rollKi:"rollKi", rollKd:"rollKd",
+      yawKp:"yawKp", yawKi:"yawKi", yawKd:"yawKd",
+    },
+  },
   system: {
       url: "/api/system",
       fields: {
@@ -511,29 +557,41 @@ const SAVE_FORMS = {
     },
   },
 };
-
 async function save(type){
-  const form = SAVE_FORMS[type];
-  const data = new URLSearchParams();
 
-  for(const [param, id] of Object.entries(form.fields)){
-    data.append(param, valueField(id));
-  }
+    const form = SAVE_FORMS[type];
+    const data = new URLSearchParams();
 
-  if(form.checks){
-    for(const [param, id] of Object.entries(form.checks)){
-      data.append(param, checked(id) ? 1 : 0);
+    for(const [param, id] of Object.entries(form.fields))
+        data.append(param, valueField(id));
+
+    if(form.checks){
+
+        for(const [param, id] of Object.entries(form.checks))
+            data.append(param, checked(id) ? 1 : 0);
+
     }
-  }
 
-  try{
-    alertSuccess(await POST(form.url, data));
-  }
-  catch(error){
-    alertError(error);
-  }
+    try{
+
+        alertSuccess(await POST(form.url, data));
+
+        if(type === "offset"){
+
+            valueField("pitchOffset", "0");
+            valueField("rollOffset", "0");
+            valueField("yawOffset", "0");
+
+            await loadStatus();
+        }
+
+    }
+    catch(error){
+
+        alertError(error);
+
+    }
 }
-
 /* ---------- Flight control ---------- */
 
 async function startFlight(){
@@ -563,9 +621,13 @@ async function loadLogs(){
 
     try{
 
-        const json = await GET_JSON("/api/logs");
+        // /api/logs devolve um array JSON puro (ex: ["voo1.csv"]),
+        // nao um objeto {files:[...]}. Usar json.files aqui sempre
+        // dava undefined e quebrava fillLogs() antes de preencher
+        // a tabela -- por isso a pagina nunca listava nada.
+        const files = await GET_JSON("/api/logs");
 
-        fillLogs(json.files);
+        fillLogs(files);
 
     }
     catch(error){
@@ -576,6 +638,8 @@ async function loadLogs(){
 }
 
 function fillLogs(files){
+
+    files = files || [];
 
     const table = $("logsTable");
 
