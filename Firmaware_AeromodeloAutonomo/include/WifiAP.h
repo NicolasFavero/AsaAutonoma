@@ -14,7 +14,7 @@ constexpr char AP_PASSWORD[] = "12345678";
 constexpr uint8_t MAX_CLIENTS = 1;
 
 
-
+class SdLogger;
 
 class WifiAP
 {
@@ -42,6 +42,7 @@ public:
 
     uint8_t getConnectedClients() const;
 
+    void attachSdLogger(SdLogger* logger); 
     /*
     ==========================================================
                         Incoming Data
@@ -54,6 +55,10 @@ public:
 
     void setSystemStatus(const SystemStatus& data);
 
+    void setTelemetryJson(const char* json);
+
+    const char* getRequestedLog() const;
+    const char* getRenameTarget() const;
     /*
     ==========================================================
                     Current Configuration
@@ -63,6 +68,8 @@ public:
     void setSystemConfig(const SystemConfig& config);
 
     void setOffsets(const ImuOffsets& offsets);
+
+    void setPidConfig(const PidConfig& config);
 
     void setFlightMode(FlightMode mode);
 
@@ -81,118 +88,146 @@ public:
 
     const ImuOffsets& getOffsets() const;
 
+    const PidConfig& getPidConfig() const;
+
     /*
     ==========================================================
                            States
     ==========================================================
     */
 
-private:
+    private:
 
-    /*
-    ==========================================================
-                        WiFi
-    ==========================================================
-    */
+        SdLogger* sdLogger = nullptr;
 
-    WebServer server{80};
+        char requestedLog[32];
+        char renameTarget[32];
 
-    bool running = false;
+        const char* telemetryJson = nullptr;
+        /*
+        ==========================================================
+                            WiFi
+        ==========================================================
+        */
 
-    /*
-    ==========================================================
-                        Cached Data
-    ==========================================================
-    */
+        WebServer server{80};
 
-    AttitudeData attitude;
+        bool running = false;
 
-    NavigationData navigation;
+        /*
+        ==========================================================
+                            Cached Data
+        ==========================================================
+        */
 
-    SystemStatus status;
+        AttitudeData attitude;
 
-    SystemConfig systemConfig;
+        NavigationData navigation;
 
-    ImuOffsets offsets;
+        SystemStatus status;
 
-    /*
-    ==========================================================
-                        Events
-    ==========================================================
-    */
+        SystemConfig systemConfig;
 
-    volatile SystemEvent pendingEvent =
-        SystemEvent::NONE;
+        ImuOffsets offsets;
 
-    /*
-    ==========================================================
-                        Routes
-    ==========================================================
-    */
+        PidConfig pidConfig;
 
-    void configureRoutes();
+        /*
+        ==========================================================
+                            Events
+        ==========================================================
+        */
 
-    /*
-    ==========================================================
-                        Pages
-    ==========================================================
-    */
+        volatile SystemEvent pendingEvent =
+            SystemEvent::NONE;
 
-    void buildHomePage();
-    char* homePage = nullptr;
-    void handleHome(); //não existe mais, era inutil, mas deixei só pra ficar organizado, para implementação futura
+        /*
+        ==========================================================
+                            Routes
+        ==========================================================
+        */
 
-    void handleConfig();
+        void configureRoutes();
 
-    void handleStatus();
+        /*
+        ==========================================================
+            Web estatica (tudo pre-comprimido em gzip na flash,
+            nada e montado em RAM em tempo de execucao)
+        ==========================================================
+        */
 
-    void handleOffsets();
+        void sendGzip(
+            const char* contentType,
+            const uint8_t* data,
+            size_t len,
+            bool longCache
+        );
 
-    void handleSystem();
+        void handleConfig();
 
-    void handleLora();
+        void handleStatus();
 
-    void handleStartFlight();
+        void handleOffsets();
 
-    void handleRestart();
+        void handlePid();
 
-    void handleNotFound();
+        void handleSystem();
 
-    /*
-    ==========================================================
-                        Helpers
-    ==========================================================
-    */
+        void handleLora();
 
-    void sendJsonStatus();
+        void handleCheckSd();
 
-    void sendJsonConfig();
+        void handleStartFlight();
 
-    void sendJsonNavigation();
+        void handleEndFlight();
 
-    void sendJsonAttitude();
+        void handleLogs();
 
-    void sendJsonSuccess(
-        const char* message
-    );
+        void handleDeleteAllLogs();
 
-    void sendJsonError(
-        const char* message
-    );
+        void handleDeleteLog();
 
-    static constexpr size_t STATUS_JSON_SIZE = 768;
+        void handleRenameLog();
 
-    static constexpr size_t MESSAGE_JSON_SIZE = 128;
+        void handleDownloadLog();
 
-    char statusJson[STATUS_JSON_SIZE];
+        void handleTelemetry();
 
-    char messageJson[MESSAGE_JSON_SIZE];
-    /*
-    ==========================================================
-                        States
-    ==========================================================
-    */
-    bool flightStarted = false;
+        void handleRestart();
 
-    bool countdownRunning = false;
+        void handleNotFound();
+
+        /*
+        ==========================================================
+                            Helpers
+        ==========================================================
+        */
+
+        void sendJsonStatus();
+
+        void sendJsonConfig();
+
+        void sendJsonSuccess(
+            const char* message
+        );
+
+        void sendJsonError(
+            const char* message
+        );
+
+        static constexpr size_t STATUS_JSON_SIZE = 1024;
+
+        static constexpr size_t MESSAGE_JSON_SIZE = 128;
+
+        char statusJson[STATUS_JSON_SIZE];
+
+        char messageJson[MESSAGE_JSON_SIZE];
+        /*
+        ==========================================================
+                            States
+        ==========================================================
+        */
+        bool flightStarted = false;
+
+        bool countdownRunning = false;
 };

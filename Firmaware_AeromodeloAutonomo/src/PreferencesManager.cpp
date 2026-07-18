@@ -16,6 +16,24 @@ namespace PreferencesKeys
 
     /*
     ==========================================================
+                            PID
+    ==========================================================
+    */
+
+    constexpr char PID_PITCH_KP[] = "pid_p_kp";
+    constexpr char PID_PITCH_KI[] = "pid_p_ki";
+    constexpr char PID_PITCH_KD[] = "pid_p_kd";
+
+    constexpr char PID_ROLL_KP[] = "pid_r_kp";
+    constexpr char PID_ROLL_KI[] = "pid_r_ki";
+    constexpr char PID_ROLL_KD[] = "pid_r_kd";
+
+    constexpr char PID_YAW_KP[] = "pid_y_kp";
+    constexpr char PID_YAW_KI[] = "pid_y_ki";
+    constexpr char PID_YAW_KD[] = "pid_y_kd";
+
+    /*
+    ==========================================================
                             System
     ==========================================================
     */
@@ -122,6 +140,31 @@ bool PreferencesManager::loadOffsets(
             PreferencesKeys::YAW,
             0.0f
         );
+
+    nvs.end();
+
+    return true;
+}
+
+bool PreferencesManager::loadPid(
+    PidConfig& config)
+{
+    Preferences nvs;
+
+    if(!openNamespace(nvs, true))
+        return false;
+
+    config.pitch.kp = nvs.getFloat(PreferencesKeys::PID_PITCH_KP, 0.0f);
+    config.pitch.ki = nvs.getFloat(PreferencesKeys::PID_PITCH_KI, 0.0f);
+    config.pitch.kd = nvs.getFloat(PreferencesKeys::PID_PITCH_KD, 0.0f);
+
+    config.roll.kp = nvs.getFloat(PreferencesKeys::PID_ROLL_KP, 0.0f);
+    config.roll.ki = nvs.getFloat(PreferencesKeys::PID_ROLL_KI, 0.0f);
+    config.roll.kd = nvs.getFloat(PreferencesKeys::PID_ROLL_KD, 0.0f);
+
+    config.yaw.kp = nvs.getFloat(PreferencesKeys::PID_YAW_KP, 0.0f);
+    config.yaw.ki = nvs.getFloat(PreferencesKeys::PID_YAW_KI, 0.0f);
+    config.yaw.kd = nvs.getFloat(PreferencesKeys::PID_YAW_KD, 0.0f);
 
     nvs.end();
 
@@ -276,6 +319,33 @@ bool PreferencesManager::saveOffsets(
     return ok;
 }
 
+bool PreferencesManager::savePid(
+    const PidConfig& config)
+{
+    Preferences nvs;
+
+    if(!openNamespace(nvs, false))
+        return false;
+
+    bool ok = true;
+
+    ok &= (nvs.putFloat(PreferencesKeys::PID_PITCH_KP, config.pitch.kp) > 0);
+    ok &= (nvs.putFloat(PreferencesKeys::PID_PITCH_KI, config.pitch.ki) > 0);
+    ok &= (nvs.putFloat(PreferencesKeys::PID_PITCH_KD, config.pitch.kd) > 0);
+
+    ok &= (nvs.putFloat(PreferencesKeys::PID_ROLL_KP, config.roll.kp) > 0);
+    ok &= (nvs.putFloat(PreferencesKeys::PID_ROLL_KI, config.roll.ki) > 0);
+    ok &= (nvs.putFloat(PreferencesKeys::PID_ROLL_KD, config.roll.kd) > 0);
+
+    ok &= (nvs.putFloat(PreferencesKeys::PID_YAW_KP, config.yaw.kp) > 0);
+    ok &= (nvs.putFloat(PreferencesKeys::PID_YAW_KI, config.yaw.ki) > 0);
+    ok &= (nvs.putFloat(PreferencesKeys::PID_YAW_KD, config.yaw.kd) > 0);
+
+    nvs.end();
+
+    return ok;
+}
+
 bool PreferencesManager::saveSystem(
     const SystemConfig& config)
 {
@@ -419,10 +489,16 @@ bool PreferencesManager::restoreDefaults()
 
     ImuOffsets offsets;
 
-    return saveAll(
+    PidConfig pidConfig;
+
+    bool ok = saveAll(
         system,
         offsets
     );
+
+    ok &= savePid(pidConfig);
+
+    return ok;
 }
 
 /*

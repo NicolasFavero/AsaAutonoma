@@ -13,6 +13,7 @@ class IMU{
 
         bool begin();
         bool update();
+        bool isHealthy() const;
         void print();
         const char* packet();
 
@@ -52,7 +53,18 @@ class IMU{
         float magZ = 0.0f;
         
         char packetBuffer[32];
+
+        // Timestamp (micros) da ultima leitura de quaternion valida do
+        // DMP. So marca sensorOk=false quando passar STALE_TIMEOUT_US
+        // sem nenhuma leitura boa -- assim uma unica falha isolada (ou
+        // o DMP simplesmente ainda nao ter gerado amostra nesse ciclo,
+        // ja que a taxa dele e bem menor que a do loop de controle) nao
+        // e confundida com o sensor realmente travado/desconectado.
         unsigned long lastUpdateMicros = 0;
+
+        static constexpr unsigned long STALE_TIMEOUT_US = 300000; // 300ms
+
+        bool sensorOk = true;
 
         static constexpr uint8_t ADDRESS = 0; //it corresponds with the 0x68
 

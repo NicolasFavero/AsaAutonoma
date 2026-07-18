@@ -31,12 +31,24 @@ bool IMU::begin() {
     }
 
     Serial.println("Filtro de Kalman (DMP) pronto. Movimente o ICM20948...");
+
+    lastUpdateMicros = micros();
+
     return true;
 }
 
 bool IMU::update(){
 
     if (!imu.dataReady()) {
+        // O DMP ainda nao gerou uma amostra nova neste ciclo -- isso e
+        // normal e esperado (a taxa do loop de controle e maior que a
+        // do DMP), NAO e falha do sensor por si so. So declara defeito
+        // de verdade se isso persistir por mais que STALE_TIMEOUT_US
+        // seguidos sem nenhuma leitura boa.
+        if (micros() - lastUpdateMicros > STALE_TIMEOUT_US) {
+            sensorOk = false;
+        }
+
         return false;
     }
 
@@ -61,8 +73,23 @@ bool IMU::update(){
     if ((imu.status != ICM_20948_Stat_Ok) &&
         (imu.status != ICM_20948_Stat_FIFOMoreDataAvail)) {
 
-        if (imu.status == ICM_20948_Stat_FIFOIncompleteData) {
+        if (imu.status == ICM_20948_Stat_FIFONoDataAvail) {
+            // FIFO simplesmente sem dado novo neste instante (ex.:
+            // dataReady() disse que havia amostra, mas entre a
+            // checagem e a leitura o DMP ainda nao tinha terminado
+            // de escrever). Benigno, nao mexe em sensorOk aqui --
+            // quem decide se isso virou defeito de verdade e o
+            // timeout abaixo, igual ao caso de !dataReady().
+        }
+        else if (imu.status == ICM_20948_Stat_FIFOIncompleteData) {
+            // FIFO com pacote incompleto: recuperavel, nao e
+            // sinal de sensor quebrado.
             imu.resetFIFO();
+        }
+        else if (micros() - lastUpdateMicros > STALE_TIMEOUT_US) {
+            // Erro real de comunicacao/DMP persistindo por tempo
+            // suficiente pra nao ser so um soluco isolado.
+            sensorOk = false;
         }
 
         return false;
@@ -109,7 +136,14 @@ bool IMU::update(){
     pitch = raw_1;
     yaw   = yaw_;
 
+    lastUpdateMicros = micros();
+    sensorOk = true;
+
     return true;
+}
+
+bool IMU::isHealthy() const {
+    return sensorOk;
 }
 
 void IMU::print(){

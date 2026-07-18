@@ -12,6 +12,7 @@ public:
     bool update();
 
     bool isValid() const;
+    bool hasCommunication() const;
 
     double getLatitude() const;
     double getLongitude() const;

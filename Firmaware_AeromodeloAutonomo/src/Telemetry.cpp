@@ -1,113 +1,11 @@
 #include "Telemetry.h"
 #include <Arduino.h>
 
-Telemetry::Telemetry(GPS& gps, BMP280& bmp, ADS& ads)
-    : gps(gps), bmp(bmp), ads(ads)
-{
-
+void Telemetry::update(const TelemetryData& newData){
+    data = newData;
 }
-void Telemetry::setAttitudeData(const AttitudeData& data)
+const char* Telemetry::buildCsv()
 {
-    attitude = data;
-}
-void Telemetry::update(bool imuValid)
-{
-    buildJson(imuValid);
-    buildCsv(imuValid);
-}
-void Telemetry::buildJson(bool imuValid)
-{
-
-    bool gpsOk = gps.isValid();
-
-    //float pitch = imuValid ? attitude.pitch : 0.0f;
-    float pitch = attitude.pitch;
-    float roll  = imuValid ? attitude.roll  : 0.0f;
-    float yaw   = imuValid ? attitude.yaw   : 0.0f;
-
-    float lat = gpsOk ? gps.getLatitude() : 0.0;
-    float lon = gpsOk ? gps.getLongitude() : 0.0;
-    float gpsAlt = gpsOk ? gps.getAltitude() : 0.0;
-    float course = gpsOk ? gps.getCourse() : 0.0;
-
-    snprintf(
-        json,
-        sizeof(json),
-        "{\"state\":\"%s\","
-        "\"gpsOk\":%d,"
-        "\"imuOk\":%d,"
-        "\"pitch\":%.2f,"
-        "\"roll\":%.2f,"
-        "\"yaw\":%.2f,"
-        "\"bmpAlt\":%.2f,"
-        "\"gpsAlt\":%.2f,"
-        "\"lat\":%.6f,"
-        "\"lon\":%.6f,"
-        "\"course\":%.2f,"
-        "\"temp\":%.2f,"
-        "\"date\":\"%02d/%02d/%02d\","
-        "\"time\":\"%02d:%02d:%02d\","
-        "\"sats\":%d,"
-        "\"bat\":%.2f}",
-
-        stateToString(),
-
-        gpsOk,
-        imuValid,
-        pitch,
-        roll,
-        yaw,
-
-        bmp.getRawAltitude(),
-        gpsAlt,
-
-        lat,
-        lon,
-
-        course,
-
-        bmp.getTemperature(),
-
-        gps.getDay(),
-        gps.getMonth(),
-        gps.getYear() % 100,
-
-        gps.getHour(),
-        gps.getMinute(),
-        gps.getSecond(),
-
-        gps.getSatellites(),
-
-        ads.batteryLevel()
-    );
-
-}
-void Telemetry::buildCsv(bool imuValid)
-{
-
-    bool gpsOk = gps.isValid();
-
-    float pitch = imuValid ? attitude.pitch : 0.0f;
-    float roll  = imuValid ? attitude.roll  : 0.0f;
-    float yaw   = imuValid ? attitude.yaw   : 0.0f;
-
-    float accX = imuValid ? attitude.accX : 0.0f;
-    float accY = imuValid ? attitude.accY : 0.0f;
-    float accZ = imuValid ? attitude.accZ : 0.0f;
-
-    float gyroX = imuValid ? attitude.gyroX : 0.0f;
-    float gyroY = imuValid ? attitude.gyroY : 0.0f;
-    float gyroZ = imuValid ? attitude.gyroZ : 0.0f;
-
-    float magX = imuValid ? attitude.magX : 0.0f;
-    float magY = imuValid ? attitude.magY : 0.0f;
-    float magZ = imuValid ? attitude.magZ : 0.0f;
-
-    float lat = gpsOk ? gps.getLatitude() : 0.0;
-    float lon = gpsOk ? gps.getLongitude() : 0.0;
-    float gpsAlt = gpsOk ? gps.getAltitude() : 0.0;
-    float course = gpsOk ? gps.getCourse() : 0.0;
-
     snprintf(
         csv,
         sizeof(csv),
@@ -133,6 +31,7 @@ void Telemetry::buildCsv(bool imuValid)
         "%.2f,"
         "%.2f,"
         "%.2f,"
+        "%.2f,"
         "%.6f,"
         "%.6f,"
         "%.2f,"
@@ -140,132 +39,184 @@ void Telemetry::buildCsv(bool imuValid)
 
         millis(),
 
-        stateToString(),
+        stateToString(data.state),
 
-        gpsOk,
-        imuValid,
+        data.gpsOk,
+        data.imuOk,
 
-        gps.getSatellites(),
+        data.satellites,
 
-        gps.getDay(),
-        gps.getMonth(),
-        gps.getYear() % 100,
+        data.day,
+        data.month,
+        data.year % 100,
 
-        gps.getHour(),
-        gps.getMinute(),
-        gps.getSecond(),
+        data.hour,
+        data.minute,
+        data.second,
 
-        pitch,
-        roll,
-        yaw,
+        data.pitch,
+        data.roll,
+        data.yaw,
 
-        accX,
-        accY,
-        accZ,
+        data.accX,
+        data.accY,
+        data.accZ,
 
-        gyroX,
-        gyroY,
-        gyroZ,
+        data.gyroX,
+        data.gyroY,
+        data.gyroZ,
 
-        magX,
-        magY,
-        magZ,
+        data.magX,
+        data.magY,
+        data.magZ,
 
-        bmp.getRawAltitude(),
-        gpsAlt,
+        data.baroAltitude,
+        data.gpsAltitude,
 
-        bmp.getTemperature(),
+        data.temperature,
 
-        lat,
-        lon,
+        data.latitude,
+        data.longitude,
 
-        course,
+        data.course,
 
-        ads.batteryLevel()
+        data.battery
     );
 
+    return csv;
 }
-const char* Telemetry::getLoraPacket(bool reduced)
+const char* Telemetry::buildLoraPacket(bool reduced)
 {
-    if(!reduced)
+    if(reduced)
     {
-        strcpy(loraPacket, json);
-        return loraPacket;
+        snprintf(
+            json,
+            sizeof(json),
+
+            "{\"s\":\"%s\","
+            "\"g\":%d,"
+            "\"alt\":%.2f,"
+            "\"lat\":%.6f,"
+            "\"lon\":%.6f,"
+            "\"c\":%.2f,"
+            "\"bat\":%.2f}",
+
+            stateToString(data.state),
+
+            data.gpsOk,
+
+            data.gpsAltitude,
+
+            data.latitude,
+            data.longitude,
+
+            data.course,
+
+            data.battery
+        );
+
+        return json;
     }
 
-
-    bool gpsOk = gps.isValid();
-
-    float lat = gpsOk ? gps.getLatitude() : 0.0;
-    float lon = gpsOk ? gps.getLongitude() : 0.0;
-    float alt = gpsOk ? gps.getAltitude() : 0.0;
-    float course = gpsOk ? gps.getCourse() : 0.0;
-
-
     snprintf(
-        loraPacket,
-        sizeof(loraPacket),
+        json,
+        sizeof(json),
 
-        "{\"s\":\"%s\",\"g\":%d,\"alt\":%.2f,\"lat\":%.6f,\"lon\":%.6f,\"c\":%.2f,\"bat\":%.2f}",
+        "{\"state\":\"%s\","
+        "\"gpsOk\":%d,"
+        "\"imuOk\":%d,"
+        "\"pitch\":%.2f,"
+        "\"roll\":%.2f,"
+        "\"yaw\":%.2f,"
+        "\"bmpAlt\":%.2f,"
+        "\"gpsAlt\":%.2f,"
+        "\"lat\":%.6f,"
+        "\"lon\":%.6f,"
+        "\"course\":%.2f,"
+        "\"temp\":%.2f,"
+        "\"date\":\"%02d/%02d/%02d\","
+        "\"time\":\"%02d:%02d:%02d\","
+        "\"sats\":%d,"
+        "\"bat\":%.2f}",
 
-        stateToString(),
-        gpsOk,
-        alt,
-        lat,
-        lon,
-        course,
-        ads.batteryLevel()
+        stateToString(data.state),
+
+        data.gpsOk,
+        data.imuOk,
+
+        data.pitch,
+        data.roll,
+        data.yaw,
+
+        data.baroAltitude,
+        data.gpsAltitude,
+
+        data.latitude,
+        data.longitude,
+
+        data.course,
+
+        data.temperature,
+
+        data.day,
+        data.month,
+        data.year % 100,
+
+        data.hour,
+        data.minute,
+        data.second,
+
+        data.satellites,
+
+        data.battery
     );
 
-
-    return loraPacket;
+    return json;
 }
-const char* Telemetry::getCsvHeader() const {
-
+const char* Telemetry::getCsvHeader() const
+{
     return
-    "millis,"
-    "state,"
-    "gpsValid,"
-    "imuValid,"
-    "sats,"
-    "date,"
-    "time,"
-    "pitch,"
-    "roll,"
-    "yaw,"
-    "accX,"
-    "accY,"
-    "accZ,"
-    "gyroX,"
-    "gyroY,"
-    "gyroZ,"
-    "magX,"
-    "magY,"
-    "magZ,"
-    "baroAlt,"
-    "gpsAlt,"
-    "temp,"
-    "lat,"
-    "lon,"
-    "course,"
-    "battery";
-
+        "millis,"
+        "state,"
+        "gpsValid,"
+        "imuValid,"
+        "sats,"
+        "date,"
+        "time,"
+        "pitch,"
+        "roll,"
+        "yaw,"
+        "accX,"
+        "accY,"
+        "accZ,"
+        "gyroX,"
+        "gyroY,"
+        "gyroZ,"
+        "magX,"
+        "magY,"
+        "magZ,"
+        "baroAlt,"
+        "gpsAlt,"
+        "temp,"
+        "lat,"
+        "lon,"
+        "course,"
+        "battery";
 }
-const char* Telemetry::getJson() const {return json;}
-const char* Telemetry::getCsv() const {return csv;}
-void Telemetry::setState(FlightState newState) {state = newState;}
-
-const char* Telemetry::stateToString() const
+const char* Telemetry::stateToString(FlightMode state) const
 {
     switch(state)
     {
-        case WAITING:
-            return "WAITING";
+        case FlightMode::CONFIG:
+            return "CONFIG";
 
-        case FLYING:
-            return "FLYING";
+        case FlightMode::COUNTDOWN:
+            return "COUNTDOWN";
 
-        case LANDED:
+        case FlightMode::FLIGHT:
+            return "FLIGHT";
+
+        case FlightMode::LANDED:
             return "LANDED";
 
         default:

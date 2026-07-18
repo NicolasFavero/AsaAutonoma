@@ -19,9 +19,13 @@ public:
 
     bool loadOffsets(ImuOffsets& offsets);
 
+    bool loadPid(PidConfig& config);
+
     bool saveSystem(const SystemConfig& config);
 
     bool saveOffsets(const ImuOffsets& offsets);
+
+    bool savePid(const PidConfig& config);
 
     bool restoreDefaults();
 

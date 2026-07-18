@@ -1,10 +1,11 @@
 #pragma once
 #include <Arduino.h>
+
 struct AttitudeData{
     float pitch = 0.0f;
     float roll = 0.0f;
     float yaw = 0.0f;
- 
+
     float accX = 0.0f;
     float accY = 0.0f;
     float accZ = 0.0f;
@@ -16,6 +17,8 @@ struct AttitudeData{
     float magX = 0.0f;
     float magY = 0.0f;
     float magZ = 0.0f;
+
+    bool isImuOk = false;
 };
 
 struct NavigationData{
@@ -32,12 +35,14 @@ struct NavigationData{
     float battery = 0.0f;
 };
 
+
 struct ServoPositions{
-    float elevator = 90.0f;
-    float leftAlieron = 90.0f;
-    float rightAlieron = 90.0f;
-    //float rudder = 90.0f;
+    float elevator =  90.0f;
+    float leftAileron = 90.0f;
+    float rightAileron = 90.0f;
 };
+
+
 /*==========================================================
                     IMU Offsets
 ==========================================================*/
@@ -45,10 +50,26 @@ struct ServoPositions{
 struct ImuOffsets
 {
     float pitch = 0.0f;
-
     float roll = 0.0f;
-
     float yaw = 0.0f;
+};
+
+/*==========================================================
+                    PID Gains
+==========================================================*/
+
+struct PidGains
+{
+    float kp = 0.0f;
+    float ki = 0.0f;
+    float kd = 0.0f;
+};
+
+struct PidConfig
+{
+    PidGains pitch;
+    PidGains roll;
+    PidGains yaw; // Ainda nao usado no controle, mas ja fica pronto.
 };
 
 struct LoraConfig
@@ -71,38 +92,51 @@ struct LoraConfig
 enum class FlightMode : uint8_t
 {
     CONFIG,
-
     COUNTDOWN,
-
     FLIGHT,
-
     LANDED
 };
 
+/*==========================================================
+                    GPS Status
+==========================================================*/
 
-enum class SystemEvent : uint8_t
+enum class GpsStatus : uint8_t
 {
-    NONE = 0,
+    NO_COMMUNICATION = 0,   // Vermelho
+    NO_FIX           = 1,   // Laranja
+    POOR_FIX         = 2,   // Amarelo
+    GOOD_FIX         = 3    // Verde
+};
+
+enum class SystemEvent : uint8_t{
+    NONE,
 
     OFFSET_CHANGED,
-
+    PID_CHANGED,
     SYSTEM_CHANGED,
-
     LORA_CHANGED,
 
+    CHECK_SD,
+
     START_FLIGHT,
+    END_FLIGHT,
+
+    DELETE_ALL_LOGS,
+    DELETE_LOG,
+    RENAME_LOG,
+
+    TELEMETRY_REQUEST,
 
     RESTART
 };
-
-
 struct SystemConfig
 {
     float batteryLimit = 7.5f;
 
-    uint16_t telemetryPeriodMs = 1E3;
+    uint16_t telemetryPeriodMs = 1000;
 
-    uint16_t lowBatteryTelemetryPeriodMs = 1E4;
+    uint16_t lowBatteryTelemetryPeriodMs = 10000;
 
     uint16_t estimatedFlightTimeMin = 30;
 
@@ -110,17 +144,18 @@ struct SystemConfig
 
     bool telemetryWebEnabled = false;
 
+    bool preFlightTelemetryEnabled = false;
+
     FlightMode flightMode = FlightMode::CONFIG;
 
     LoraConfig lora;
 };
 
-
 struct SystemStatus
 {
     bool imuOk = false;
 
-    bool gpsOk = false;
+    GpsStatus gpsStatus = GpsStatus::NO_COMMUNICATION;
 
     bool bmpOk = false;
 
@@ -137,3 +172,46 @@ struct SystemStatus
     uint8_t wifiClients = 0;
 };
 
+struct TelemetryData
+{
+    bool gpsOk;
+    bool imuOk;
+
+    FlightMode state;
+
+    float pitch;
+    float roll;
+    float yaw;
+
+    float accX;
+    float accY;
+    float accZ;
+
+    float gyroX;
+    float gyroY;
+    float gyroZ;
+
+    float magX;
+    float magY;
+    float magZ;
+
+    float latitude;
+    float longitude;
+
+    float gpsAltitude;
+    float baroAltitude;
+
+    float course;
+    float temperature;
+    float battery;
+
+    uint8_t satellites;
+
+    uint8_t day;
+    uint8_t month;
+    uint16_t year;
+
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+};

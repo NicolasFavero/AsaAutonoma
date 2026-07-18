@@ -34,9 +34,15 @@
 //OTHERS
 unsigned long lastTelemetryMillis = 0;
 volatile bool newOffsetsAvailable = false;
+volatile bool newPidAvailable = false;
 
+bool wifiEnabled = false;
+bool wifiTemporary = false;
+
+unsigned long wifiStartMillis = 0;
 //==================================================================STRUCTS===============================================================================
 ImuOffsets currentOffsets; 
+PidConfig currentPidConfig;
 SystemConfig systemConfig;
 SystemStatus systemStatus;
 //========================================================================================================================================================
@@ -65,7 +71,7 @@ Servo rightAlieron(Pins::RIGHT_AILERON, ServoConfig::Channel::RIGHT_AILERON, Ser
 //Servo rudder    (Pins::RUDDER,        ServoConfig::Channel::RUDDER,        ServoConfig::FREQUENCY, ServoConfig::RESOLUTION); 
 
 // Telemetry
-Telemetry telemetry(gps, bmp, ads);
+Telemetry telemetry;
 
 //Visual Debug
 Led led;
@@ -75,6 +81,7 @@ Led led;
 QueueHandle_t attitudeQueue;
 QueueHandle_t navigationQueue;
 portMUX_TYPE offsetMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE pidMux = portMUX_INITIALIZER_UNLOCKED;
 //========================================================================================================================================================
 //=================================================================PROTOTYPES=============================================================================
 // TASKS
@@ -86,9 +93,12 @@ bool readAttitudeData(AttitudeData& attitude);
 
 // TASK DATA HELPERS
 void sendNavigationData(NavigationData& navigationData);
-void handleOutputs();
+void handleWifiTimeout();
+void handleOutputs(FlightMode mode);
 void handleWifi(const AttitudeData& attitude, const NavigationData& navigationData);
-
+void updateGpsStatus();
+void setupWifi();
+TelemetryData buildTelemetryData(AttitudeData& attitude);
 // GENERAL HELPERS
 bool isLowPowerModeEnabled();
 
@@ -107,6 +117,19 @@ void setup(){
 
   nvs.loadSystem(systemConfig);
   nvs.loadOffsets(currentOffsets);
+  nvs.loadPid(currentPidConfig);
+
+  pid.pitch.kp = currentPidConfig.pitch.kp;
+  pid.pitch.ki = currentPidConfig.pitch.ki;
+  pid.pitch.kd = currentPidConfig.pitch.kd;
+
+  pid.roll.kp = currentPidConfig.roll.kp;
+  pid.roll.ki = currentPidConfig.roll.ki;
+  pid.roll.kd = currentPidConfig.roll.kd;
+
+  pid.yaw.kp = currentPidConfig.yaw.kp;
+  pid.yaw.ki = currentPidConfig.yaw.ki;
+  pid.yaw.kd = currentPidConfig.yaw.kd;
 
   while(!imu.begin()){led.red();}
   while(!bmp.begin()){led.red();}
@@ -133,17 +156,7 @@ void setup(){
       delay(500);
     }
   }
-  if(systemConfig.wifiEnabled)
-  {
-    if(wifi.begin())
-    {
-        wifi.print();
-
-        wifi.setSystemConfig(systemConfig);
-
-        wifi.setOffsets(currentOffsets);
-    }
-  }
+  setupWifi();
 
   lastTelemetryMillis = millis();
 
@@ -184,6 +197,7 @@ void taskControl(void *pv){
 
   while(true){
     bool useNewValues = true;
+
     static AttitudeData attitudeData;
     static NavigationData nav; 
     static ServoPositions angle;
@@ -199,14 +213,34 @@ void taskControl(void *pv){
       portEXIT_CRITICAL(&offsetMux);
     }
 
+    if(systemConfig.flightMode == FlightMode::CONFIG && newPidAvailable){
+      portENTER_CRITICAL(&pidMux);
+
+      pid.pitch.kp = currentPidConfig.pitch.kp;
+      pid.pitch.ki = currentPidConfig.pitch.ki;
+      pid.pitch.kd = currentPidConfig.pitch.kd;
+
+      pid.roll.kp = currentPidConfig.roll.kp;
+      pid.roll.ki = currentPidConfig.roll.ki;
+      pid.roll.kd = currentPidConfig.roll.kd;
+
+      pid.yaw.kp = currentPidConfig.yaw.kp;
+      pid.yaw.ki = currentPidConfig.yaw.ki;
+      pid.yaw.kd = currentPidConfig.yaw.kd;
+
+      newPidAvailable = false;
+
+      portEXIT_CRITICAL(&pidMux);
+    }
+
     imu.update();
 
     pid.setAngles(angle, attitudeData, nav, useNewValues); 
 
 
     elevator.write(angle.elevator);
-    leftAlieron.write(angle.leftAlieron);
-    rightAlieron.write(angle.rightAlieron);
+    leftAlieron.write(angle.leftAileron);
+    rightAlieron.write(angle.rightAileron);
 
   //===================TO  ATTITUDE==============
   //=====================FOR SEND================
@@ -225,6 +259,8 @@ void taskControl(void *pv){
     attitudeData.magX= imu.getMagX();
     attitudeData.magY = imu.getMagY();
     attitudeData.magZ = imu.getMagZ();
+
+    attitudeData.isImuOk = imu.isHealthy();
 
     xQueueOverwrite(attitudeQueue, &attitudeData);
   //=====================FOR SEND================
@@ -248,22 +284,33 @@ void taskData(void *pv){
 
     static NavigationData navigationData;
     static AttitudeData attitude;
-    
-    bmp.update();
+
+    readAttitudeData(attitude);
+
+    systemStatus.bmpOk = bmp.update();
+    systemStatus.imuOk = attitude.isImuOk;
 
     if(gps.update()){led.green(); /*Serial.println("GPS Atualizado");*/} 
     else{led.blue();}
 
-    isImuValid = readAttitudeData(attitude);
+  
 
-    telemetry.update(isImuValid);
-      
+    telemetry.update(buildTelemetryData(attitude));
+
     sendNavigationData(navigationData);
 
-    handleOutputs();//Send LoRa and register in SD_Card
+    handleOutputs(systemConfig.flightMode);//Sends LoRa Packets and registers logs in SD_Card, it update systemStatus.loraOk
 
-    if(systemConfig.flightMode == FlightMode::CONFIG){
-      handleWifi(attitude, navigationData);
+    if(systemConfig.flightMode != FlightMode::FLIGHT){
+
+
+      if(wifiEnabled){
+        handleWifi(attitude, navigationData);
+        updateGpsStatus();
+      }
+      else{      
+        handleWifiTimeout();
+      }
     }
 
     vTaskDelayUntil(&lastWake, period);
@@ -305,6 +352,22 @@ void handleWifi(const AttitudeData& attitude, const NavigationData& navigationDa
 
             break;
 
+        case SystemEvent::PID_CHANGED:
+
+            portENTER_CRITICAL(&pidMux);
+
+            currentPidConfig = wifi.getPidConfig();
+
+            newPidAvailable = true;
+
+            portEXIT_CRITICAL(&pidMux);
+
+            nvs.savePid(currentPidConfig);
+
+            wifi.setPidConfig(currentPidConfig);
+
+            break;
+
         case SystemEvent::SYSTEM_CHANGED:
 
             systemConfig = wifi.getSystemConfig();
@@ -330,11 +393,72 @@ void handleWifi(const AttitudeData& attitude, const NavigationData& navigationDa
         case SystemEvent::START_FLIGHT:
 
             systemConfig.flightMode =
-                FlightMode::FLIGHT;
+                FlightMode::COUNTDOWN;
 
             wifi.setFlightMode(
                 systemConfig.flightMode
             );
+
+            break;
+
+        case SystemEvent::END_FLIGHT:
+
+            systemConfig.flightMode =
+                FlightMode::LANDED;
+
+            wifi.setFlightMode(
+                systemConfig.flightMode
+            );
+
+            break;
+
+        case SystemEvent::CHECK_SD:
+
+            systemStatus.sdOk = sd.saveLine(
+                telemetry.getCsvHeader()
+            );
+
+            break;
+
+        case SystemEvent::DELETE_ALL_LOGS:
+
+            if(sd.removeAllLogs())
+            {
+                Serial.println("Todos os logs removidos.");
+            }
+            else
+            {
+                Serial.println("Falha ao remover logs.");
+            }
+
+            break;
+        case SystemEvent::DELETE_LOG:
+
+            if(sd.removeFile(wifi.getRequestedLog()))
+            {
+                Serial.println("Log removido.");
+            }
+            else
+            {
+                Serial.println("Falha ao remover log.");
+            }
+
+            break;
+        case SystemEvent::RENAME_LOG:
+
+            if(sd.renameFile(wifi.getRequestedLog(), wifi.getRenameTarget()))
+            {
+                Serial.println("Log renomeado.");
+            }
+            else
+            {
+                Serial.println("Falha ao renomear log.");
+            }
+
+            break;
+        case SystemEvent::TELEMETRY_REQUEST:
+
+            wifi.setTelemetryJson(telemetry.buildLoraPacket(false));
 
             break;
 
@@ -347,32 +471,73 @@ void handleWifi(const AttitudeData& attitude, const NavigationData& navigationDa
 
     wifi.clearPendingEvent();
 }
-void handleOutputs(){
+void handleOutputs(FlightMode mode){
+    bool lowPower = isLowPowerModeEnabled();
 
-    bool powerMode = isLowPowerModeEnabled();
-      //it runs when the BATTERY_LEVEL its HIGH
-    if(!powerMode){
+    uint32_t period;
+    bool sendLora = true;
+    bool saveSd = false;
 
-      if(millis() - lastTelemetryMillis > systemConfig.telemetryPeriodMs){ //The real time to loop this is 1E3 seconds? because of de vTaskDelay
+    switch(mode)
+    {
+        case FlightMode::CONFIG:
 
-        lastTelemetryMillis = millis();
+            period = systemConfig.telemetryPeriodMs;
 
-        lora.send(telemetry.getLoraPacket(powerMode));
-      
-        if(!sd.saveLine(telemetry.getCsv())){Serial.println("Error ao gravar SD....");}
+            sendLora = systemConfig.preFlightTelemetryEnabled; // futura função
 
-        Serial.println(telemetry.getJson());
-      }
+            break;
+
+        case FlightMode::COUNTDOWN:
+
+            period = systemConfig.telemetryPeriodMs;
+
+            sendLora = true;
+            saveSd = true;
+            // nos últimos 5 s você muda esse período
+            // no código do countdown, não aqui.
+
+            break;
+
+        case FlightMode::FLIGHT:
+
+            period = lowPower
+                ? systemConfig.lowBatteryTelemetryPeriodMs
+                : systemConfig.telemetryPeriodMs;
+
+            sendLora = true;
+            saveSd = !lowPower;
+
+            break;
+
+        case FlightMode::LANDED:
+
+            period = systemConfig.lowBatteryTelemetryPeriodMs;
+
+            sendLora = true;
+            saveSd = false;
+
+            break;
     }
-    //it runs when the BATTERY_LEVEL its LOW
-      else{        
-        if(millis() - lastTelemetryMillis > systemConfig.lowBatteryTelemetryPeriodMs){ //1E4ms
-          
-          lastTelemetryMillis = millis();
 
-          lora.send(telemetry.getLoraPacket(powerMode));
-        }
-      }
+    if(millis() - lastTelemetryMillis < period)
+        return;
+
+    lastTelemetryMillis = millis();
+
+    if(sendLora)
+    {
+        systemStatus.loraOk =
+            lora.send(telemetry.buildLoraPacket(lowPower));
+    }
+
+    if(saveSd)
+    {
+        systemStatus.sdOk =
+            sd.saveLine(telemetry.buildCsv());
+    }
+
+    if(FlightMode::CONFIG == mode) {Serial.println(telemetry.buildLoraPacket(false));}
 }
 void sendNavigationData(NavigationData& navigationData){
     
@@ -391,7 +556,7 @@ void sendNavigationData(NavigationData& navigationData){
         gpsValid ? gps.getCourse() : 0.0f;
 
     navigationData.satellites =
-        gpsValid ? gps.getSatellites() : 0;
+        gps.getSatellites();
 
     navigationData.baroAltitude =
         bmp.getRawAltitude();
@@ -416,4 +581,136 @@ bool readAttitudeData(AttitudeData& attitude){
 }
 bool isLowPowerModeEnabled(){
     return ads.batteryLevel() < systemConfig.batteryLimit;
+}
+void updateGpsStatus(){
+    if(!gps.hasCommunication())
+    {
+        systemStatus.gpsStatus = GpsStatus::NO_COMMUNICATION;
+        return;
+    }
+
+    if(!gps.isValid())
+    {
+        systemStatus.gpsStatus = GpsStatus::NO_FIX;
+        return;
+    }
+
+    if(gps.getSatellites() < 6)
+    {
+        systemStatus.gpsStatus = GpsStatus::POOR_FIX;
+        return;
+    }
+
+    systemStatus.gpsStatus = GpsStatus::GOOD_FIX;
+}
+void setupWifi(){
+    // Nunca voou: liga normalmente
+    /*if(systemConfig.flightMode == FlightMode::CONFIG)
+    {
+        wifiEnabled = true;
+        wifiTemporary = false;
+    }
+    // Já voou: só liga se detectar 3,3 V no A3
+    else if(ads.adcVoltage(3) > 3.0f)
+    {
+        wifiEnabled = true;
+        wifiTemporary = true;
+        wifiStartMillis = millis();
+    }*/
+
+    //if(!wifiEnabled)
+        //return;
+
+    if(wifi.begin())
+    {
+        wifiEnabled = true;
+
+        wifi.attachSdLogger(&sd);
+
+        wifi.print();
+
+        wifi.setSystemConfig(systemConfig);
+
+        wifi.setOffsets(currentOffsets);
+
+        wifi.setPidConfig(currentPidConfig);
+    }
+    else
+    {
+        wifiEnabled = false;
+    }
+}
+void handleWifiTimeout(){
+    if(!wifiEnabled || !wifiTemporary)
+        return;
+
+    // Se alguém conectou, mantém o AP ligado
+    if(wifi.hasClient())
+    {
+        wifiTemporary = false;
+        return;
+    }
+
+    // Ninguém conectou durante 20 s
+    if(millis() - wifiStartMillis >= 20000)
+    {
+        wifi.stop();
+
+        wifiEnabled = false;
+
+        wifiTemporary = false;
+    }
+}
+TelemetryData buildTelemetryData(AttitudeData& attitude){
+
+    TelemetryData data{};
+
+    data.state = systemConfig.flightMode;
+
+    data.gpsOk = gps.isValid();
+    data.imuOk = attitude.isImuOk;
+
+    if(attitude.isImuOk)
+    {
+        data.pitch = attitude.pitch;
+        data.roll  = attitude.roll;
+        data.yaw   = attitude.yaw;
+
+        data.accX = attitude.accX;
+        data.accY = attitude.accY;
+        data.accZ = attitude.accZ;
+
+        data.gyroX = attitude.gyroX;
+        data.gyroY = attitude.gyroY;
+        data.gyroZ = attitude.gyroZ;
+
+        data.magX = attitude.magX;
+        data.magY = attitude.magY;
+        data.magZ = attitude.magZ;
+    }
+
+    if(data.gpsOk)
+    {
+        data.latitude   = gps.getLatitude();
+        data.longitude  = gps.getLongitude();
+        data.gpsAltitude = gps.getAltitude();
+        data.course     = gps.getCourse();
+
+        data.day    = gps.getDay();
+        data.month  = gps.getMonth();
+        data.year   = gps.getYear();
+
+        data.hour   = gps.getHour();
+        data.minute = gps.getMinute();
+        data.second = gps.getSecond();
+    }
+
+    data.satellites = gps.getSatellites();
+
+    data.baroAltitude = bmp.getRawAltitude();
+    data.temperature  = bmp.getTemperature();
+
+    data.battery = ads.batteryLevel();
+
+    return data;
 }

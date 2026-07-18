@@ -66,6 +66,7 @@ bool GPS::update(){
     return true;
 }
 bool GPS::isValid() const {return valid;}
+bool GPS::hasCommunication() const {return gps.passedChecksum() > 0;}
 double GPS::getLatitude() const {return latitude;}
 double GPS::getLongitude() const {return longitude;}
 double GPS::getAltitude() const {return altitude;}

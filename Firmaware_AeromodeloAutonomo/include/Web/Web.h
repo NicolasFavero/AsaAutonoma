@@ -8,6 +8,7 @@
 
 #include "Pages/StatusPage.h"
 #include "Pages/OffsetPage.h"
+#include "Pages/PidPage.h"
 #include "Pages/SystemPage.h"
 #include "Pages/LoraPage.h"
 #include "Pages/FlightPage.h"

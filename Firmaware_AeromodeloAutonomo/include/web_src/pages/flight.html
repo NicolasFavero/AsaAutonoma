@@ -10,10 +10,17 @@
 </table>
 </div>
 
+<div class="card" id="countdownCard" style="display:none;">
+<h3>Contagem Regressiva</h3>
+<p id="countdownNumber" style="font-size:2.5em; text-align:center; margin:0.2em 0;">--</p>
+<p class="warn">Decolagem em andamento. Use "Cancelar" na confirmação antes de iniciar caso queira desistir.</p>
+</div>
+
 <div class="card">
 <h3>Comandos</h3>
 <p class="warn">Ao iniciar o voo, todas as configurações ficam bloqueadas até reiniciar o ESP32.</p>
 <button id="startFlight" class="primary">Iniciar Voo</button>
+<button id="endFlight" class="danger">Finalizar Voo</button>
 </div>
 
 <div class="card">

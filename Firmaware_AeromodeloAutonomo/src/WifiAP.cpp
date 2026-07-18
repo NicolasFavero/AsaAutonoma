@@ -1,6 +1,14 @@
 #include "WifiAP.h"
 #include "Web/Web.h"
 
+#include "SdLogger.h"
+/*
+Leitura direta do SD apenas para requisições HTTP síncronas
+(listagem e download de logs).
+
+Operações que modificam o cartão SD continuam utilizando
+SystemEvent e são executadas pelo main.cpp.
+*/
 
 WifiAP::WifiAP(): server(80){}
 bool WifiAP::begin(){
@@ -19,8 +27,6 @@ bool WifiAP::begin(){
         return false;
     }
 
-    buildHomePage();
-
     configureRoutes();
 
     server.begin();
@@ -28,40 +34,6 @@ bool WifiAP::begin(){
     running = true;
 
     return true;
-}
-void WifiAP::buildHomePage(){
-    const size_t len =
-        snprintf(
-            nullptr,
-            0,
-            Web::Pages::HOME_PAGE,
-            Web::Style::CSS,
-            Web::Components::MENU_COMPONENT,
-            Web::Script::JS
-        );
-
-    if(homePage)
-    {
-        free(homePage);
-        homePage = nullptr;
-    }
-
-    homePage =
-        (char*)malloc(len + 1);
-
-    //homePage = (char*)ps_malloc(len + 1);
-
-    if(!homePage)
-        return;
-
-    snprintf(
-        homePage,
-        len + 1,
-        Web::Pages::HOME_PAGE,
-        Web::Style::CSS,
-        Web::Components::MENU_COMPONENT,
-        Web::Script::JS
-    );
 }
 void WifiAP::stop(){
     if(!running)
@@ -72,13 +44,6 @@ void WifiAP::stop(){
     WiFi.softAPdisconnect(true);
 
     WiFi.mode(WIFI_OFF);
-
-    if(homePage)
-    {
-        free(homePage);
-
-        homePage = nullptr;
-    }
 
     running = false;
 }
@@ -136,6 +101,9 @@ void WifiAP::setSystemConfig(const SystemConfig& config){
 void WifiAP::setOffsets(const ImuOffsets& newOffsets){
     offsets = newOffsets;
 }
+void WifiAP::setPidConfig(const PidConfig& config){
+    pidConfig = config;
+}
 SystemEvent WifiAP::getPendingEvent() const{
     return pendingEvent;
 }
@@ -150,75 +118,157 @@ const ImuOffsets&
 WifiAP::getOffsets() const{
     return offsets;
 }
+const PidConfig&
+WifiAP::getPidConfig() const{
+    return pidConfig;
+}
+void WifiAP::sendGzip(
+    const char* contentType,
+    const uint8_t* data,
+    size_t len,
+    bool longCache)
+{
+    server.sendHeader("Content-Encoding", "gzip");
+
+    server.sendHeader(
+        "Cache-Control",
+        longCache
+            ? "public, max-age=31536000, immutable"
+            : "no-cache"
+    );
+
+    server.send_P(
+        200,
+        contentType,
+        reinterpret_cast<PGM_P>(data),
+        len
+    );
+}
 void WifiAP::configureRoutes(){
     /*
     ==========================================================
-                        HOME
+        SHELL / ESTATICOS
+        Tudo aqui e servido direto da flash ja comprimido em
+        gzip, sem nenhuma montagem em RAM (sem malloc/snprintf).
+        style.css e script.js tem URL versionada (?v=hash),
+        entao podem ficar em cache "para sempre" no navegador:
+        se o conteudo mudar, a versao muda e o cache e ignorado.
     ==========================================================
     */
 
     server.on("/", HTTP_GET, [this]()
     {
-        handleHome();
+        sendGzip(
+            "text/html",
+            Web::Shell::PAGE_GZ,
+            Web::Shell::PAGE_GZ_LEN,
+            false
+        );
+    });
+
+    server.on("/style.css", HTTP_GET, [this]()
+    {
+        sendGzip(
+            "text/css",
+            Web::Style::CSS_GZ,
+            Web::Style::CSS_GZ_LEN,
+            true
+        );
+    });
+
+    server.on("/script.js", HTTP_GET, [this]()
+    {
+        sendGzip(
+            "application/javascript",
+            Web::Script::JS_GZ,
+            Web::Script::JS_GZ_LEN,
+            true
+        );
     });
 
     /*
     ==========================================================
-                        HTML PAGES
+                        HTML PAGES (fragmentos AJAX)
     ==========================================================
     */
 
     server.on("/page/status", HTTP_GET, [this]()
     {
-        server.send_P(
-            200,
+        sendGzip(
             "text/html",
-            Web::Pages::STATUS_PAGE
+            Web::Pages::STATUS_PAGE_GZ,
+            Web::Pages::STATUS_PAGE_GZ_LEN,
+            false
         );
     });
 
     server.on("/page/offsets", HTTP_GET, [this]()
     {
-        server.send_P(
-            200,
+        sendGzip(
             "text/html",
-            Web::Pages::OFFSET_PAGE
+            Web::Pages::OFFSET_PAGE_GZ,
+            Web::Pages::OFFSET_PAGE_GZ_LEN,
+            false
+        );
+    });
+
+    server.on("/page/pid", HTTP_GET, [this]()
+    {
+        sendGzip(
+            "text/html",
+            Web::Pages::PID_PAGE_GZ,
+            Web::Pages::PID_PAGE_GZ_LEN,
+            false
         );
     });
 
     server.on("/page/system", HTTP_GET, [this]()
     {
-        server.send_P(
-            200,
+        sendGzip(
             "text/html",
-            Web::Pages::SYSTEM_PAGE
+            Web::Pages::SYSTEM_PAGE_GZ,
+            Web::Pages::SYSTEM_PAGE_GZ_LEN,
+            false
         );
     });
 
     server.on("/page/lora", HTTP_GET, [this]()
     {
-        server.send_P(
-            200,
+        sendGzip(
             "text/html",
-            Web::Pages::LORA_PAGE
+            Web::Pages::LORA_PAGE_GZ,
+            Web::Pages::LORA_PAGE_GZ_LEN,
+            false
         );
     });
 
     server.on("/page/flight", HTTP_GET, [this]()
     {
-        server.send_P(
-            200,
+        sendGzip(
             "text/html",
-            Web::Pages::FLIGHT_PAGE
+            Web::Pages::FLIGHT_PAGE_GZ,
+            Web::Pages::FLIGHT_PAGE_GZ_LEN,
+            false
         );
     });
 
-    server.on("/page/diagnostics", HTTP_GET, [this]()
+    server.on("/page/console", HTTP_GET, [this]()
     {
-        server.send_P(
-            200,
+        sendGzip(
             "text/html",
-            Web::Pages::DIAGNOSTIC_PAGE
+            Web::Pages::CONSOLE_PAGE_GZ,
+            Web::Pages::CONSOLE_PAGE_GZ_LEN,
+            false
+        );
+    });
+
+    server.on("/page/logs", HTTP_GET, [this]()
+    {
+        sendGzip(
+            "text/html",
+            Web::Pages::LOG_PAGE_GZ,
+            Web::Pages::LOG_PAGE_GZ_LEN,
+            false
         );
     });
 
@@ -243,6 +293,11 @@ void WifiAP::configureRoutes(){
         handleOffsets();
     });
 
+    server.on("/api/pid", HTTP_POST, [this]()
+    {
+        handlePid();
+    });
+
     server.on("/api/system", HTTP_POST, [this]()
     {
         handleSystem();
@@ -252,12 +307,49 @@ void WifiAP::configureRoutes(){
     {
         handleLora();
     });
-
+    server.on("/api/checksd", HTTP_POST, [this]()
+    {
+        handleCheckSd();
+    });
     server.on("/api/start", HTTP_POST, [this]()
     {
         handleStartFlight();
     });
+    server.on("/api/end", HTTP_POST, [this]()
+    {
+        handleEndFlight();
+    });
+    server.on("/api/logs", HTTP_GET, [this]()
+    {
+        handleLogs();
+    });
 
+    server.on("/api/logs/delete", HTTP_POST, [this]()
+    {
+        handleDeleteLog();
+    });
+
+    server.on("/api/logs/rename", HTTP_POST, [this]()
+    {
+        handleRenameLog();
+    });
+
+    server.on("/api/logs/deleteAll", HTTP_POST, [this]()
+    {
+        handleDeleteAllLogs();
+    });
+    server.on("/api/logs/download", HTTP_GET, [this]()
+    {
+        handleDownloadLog();
+    });
+    server.on(
+        "/api/telemetry",
+        HTTP_GET,
+        [this]()
+        {
+            handleTelemetry();
+        }
+    );
     server.on("/api/restart", HTTP_POST, [this]()
     {
         handleRestart();
@@ -274,29 +366,11 @@ void WifiAP::configureRoutes(){
         handleNotFound();
     });
 }
-void WifiAP::handleHome(){
-    if(!homePage)
-    {
-        server.send(
-            500,
-            "text/plain",
-            "Home Page Error"
-        );
-
-        return;
-    }
-
-    server.send(
-        200,
-        "text/html",
-        homePage
-    );
+void WifiAP::handleStatus(){
+    sendJsonStatus();
 }
 void WifiAP::handleConfig(){
     sendJsonConfig();
-}
-void WifiAP::handleStatus(){
-    sendJsonStatus();
 }
 void WifiAP::handleOffsets(){
     if(systemConfig.flightMode != FlightMode::CONFIG)
@@ -324,6 +398,58 @@ void WifiAP::handleOffsets(){
 
     sendJsonSuccess(
         "Offsets Updated"
+    );
+}
+void WifiAP::handlePid(){
+    if(systemConfig.flightMode != FlightMode::CONFIG)
+    {
+        sendJsonError(
+            "Configuration Locked"
+        );
+        return;
+    }
+
+    if(server.hasArg("pitchKp"))
+        pidConfig.pitch.kp =
+            server.arg("pitchKp").toFloat();
+
+    if(server.hasArg("pitchKi"))
+        pidConfig.pitch.ki =
+            server.arg("pitchKi").toFloat();
+
+    if(server.hasArg("pitchKd"))
+        pidConfig.pitch.kd =
+            server.arg("pitchKd").toFloat();
+
+    if(server.hasArg("rollKp"))
+        pidConfig.roll.kp =
+            server.arg("rollKp").toFloat();
+
+    if(server.hasArg("rollKi"))
+        pidConfig.roll.ki =
+            server.arg("rollKi").toFloat();
+
+    if(server.hasArg("rollKd"))
+        pidConfig.roll.kd =
+            server.arg("rollKd").toFloat();
+
+    if(server.hasArg("yawKp"))
+        pidConfig.yaw.kp =
+            server.arg("yawKp").toFloat();
+
+    if(server.hasArg("yawKi"))
+        pidConfig.yaw.ki =
+            server.arg("yawKi").toFloat();
+
+    if(server.hasArg("yawKd"))
+        pidConfig.yaw.kd =
+            server.arg("yawKd").toFloat();
+
+    pendingEvent =
+        SystemEvent::PID_CHANGED;
+
+    sendJsonSuccess(
+        "PID Updated"
     );
 }
 void WifiAP::handleSystem(){
@@ -405,6 +531,22 @@ void WifiAP::handleLora(){
 
     sendJsonSuccess("LoRa Updated");
 }
+void WifiAP::handleCheckSd()
+{
+    if(systemConfig.flightMode != FlightMode::CONFIG)
+    {
+        sendJsonError(
+            "Configuration Locked"
+        );
+        return;
+    }
+
+    pendingEvent = SystemEvent::CHECK_SD;
+
+    sendJsonSuccess(
+        "SD Test Requested"
+    );
+}
 void WifiAP::handleStartFlight()
 {
     if(systemConfig.flightMode != FlightMode::CONFIG)
@@ -422,6 +564,24 @@ void WifiAP::handleStartFlight()
         "Countdown Started"
     );
 }
+void WifiAP::handleEndFlight()
+{
+    if(systemConfig.flightMode != FlightMode::COUNTDOWN &&
+       systemConfig.flightMode != FlightMode::FLIGHT)
+    {
+        sendJsonError(
+            "No Active Flight"
+        );
+        return;
+    }
+
+    pendingEvent =
+        SystemEvent::END_FLIGHT;
+
+    sendJsonSuccess(
+        "Flight Ended"
+    );
+}
 void WifiAP::handleRestart(){
     pendingEvent =
         SystemEvent::RESTART;
@@ -437,8 +597,192 @@ void WifiAP::handleNotFound(){
         "404"
     );
 }
+void WifiAP::handleDeleteAllLogs(){
+    pendingEvent = SystemEvent::DELETE_ALL_LOGS;
+
+    sendJsonSuccess("Delete Requested");
+}
+void WifiAP::handleLogs()
+{
+    if(sdLogger == nullptr)
+    {
+        sendJsonError("SD Logger Not Attached");
+        return;
+    }
+
+    String json;
+
+    if(!sdLogger->listFiles(json))
+    {
+        sendJsonError("Failed To Read SD");
+        return;
+    }
+
+    server.send(
+        200,
+        "application/json",
+        json
+    );
+}
+void WifiAP::handleDeleteLog(){
+    if(!server.hasArg("file"))
+    {
+        sendJsonError("Missing file");
+
+        return;
+    }
+
+    strncpy(
+        requestedLog,
+        server.arg("file").c_str(),
+        sizeof(requestedLog) - 1
+    );
+
+    requestedLog[sizeof(requestedLog) - 1] = '\0';
+
+    pendingEvent = SystemEvent::DELETE_LOG;
+
+    sendJsonSuccess("Delete Requested");
+}
+void WifiAP::handleRenameLog(){
+    if(!server.hasArg("file") || !server.hasArg("newName"))
+    {
+        sendJsonError("Missing file or newName");
+        return;
+    }
+
+    strncpy(
+        requestedLog,
+        server.arg("file").c_str(),
+        sizeof(requestedLog) - 1
+    );
+    requestedLog[sizeof(requestedLog) - 1] = '\0';
+
+    strncpy(
+        renameTarget,
+        server.arg("newName").c_str(),
+        sizeof(renameTarget) - 1
+    );
+    renameTarget[sizeof(renameTarget) - 1] = '\0';
+
+    // Mesmas regras de seguranca do download: sem path traversal,
+    // sem subdiretorio, sempre terminando em .csv.
+    const char* names[2] = { requestedLog, renameTarget };
+
+    for(const char* name : names)
+    {
+        if(strstr(name, "..") != nullptr ||
+           strchr(name, '/')  != nullptr ||
+           strchr(name, '\\') != nullptr)
+        {
+            sendJsonError("Invalid File");
+            return;
+        }
+
+        const char* ext = strrchr(name, '.');
+
+        if(ext == nullptr || strcmp(ext, ".csv") != 0)
+        {
+            sendJsonError("Invalid File");
+            return;
+        }
+    }
+
+    pendingEvent = SystemEvent::RENAME_LOG;
+
+    sendJsonSuccess("Rename Requested");
+}
+void WifiAP::handleDownloadLog(){
+    if(!server.hasArg("file"))
+    {
+        sendJsonError("Missing File");
+        return;
+    }
+
+    if(sdLogger == nullptr)
+    {
+        sendJsonError("SD Logger Not Attached");
+        return;
+    }
+
+    strncpy(
+        requestedLog,
+        server.arg("file").c_str(),
+        sizeof(requestedLog) - 1
+    );
+
+    requestedLog[sizeof(requestedLog) - 1] = '\0';
+
+    // Não permite caminhos relativos
+    if(strstr(requestedLog, "..") != nullptr)
+    {
+        sendJsonError("Invalid File");
+        return;
+    }
+
+    // Não permite subdiretórios
+    if(strchr(requestedLog, '/') != nullptr ||
+       strchr(requestedLog, '\\') != nullptr)
+    {
+        sendJsonError("Invalid File");
+        return;
+    }
+
+    // Apenas arquivos .csv (a checagem abaixo ja cobre isso, mas
+    // deixa explicito: nao existe mais exigencia de prefixo "voo",
+    // pois /api/logs/rename permite renomear o arquivo livremente).
+    // Deve terminar em ".csv"
+    const char* ext = strrchr(requestedLog, '.');
+
+    if(ext == nullptr || strcmp(ext, ".csv") != 0)
+    {
+        sendJsonError("Invalid File");
+        return;
+    }
+
+    File32 file;
+
+    if(!sdLogger->openRead(requestedLog, file))
+    {
+        sendJsonError("File Not Found");
+        return;
+    }
+
+    server.sendHeader(
+        "Content-Disposition",
+        String("attachment; filename=\"") +
+        requestedLog +
+        "\""
+    );
+
+    server.setContentLength(file.size());
+
+    server.send(
+        200,
+        "text/csv",
+        ""
+    );
+
+    WiFiClient client = server.client();
+
+    uint8_t buffer[512];
+
+    while(file.available())
+    {
+        size_t len = file.read(
+            buffer,
+            sizeof(buffer)
+        );
+
+        if(len == 0)
+            break;
+
+        client.write(buffer, len);
+    }
+
+    file.close();
+}
 void WifiAP::sendJsonStatus(){
-    
     const char* mode;
 
     switch(systemConfig.flightMode)
@@ -492,10 +836,12 @@ void WifiAP::sendJsonStatus(){
         "\"telemetryWeb\":%s,"
 
         "\"gpsSat\":%u,"
+        "\"gpsStatus\":%u,"
 
         "\"imuOk\":%s,"
-        "\"gpsOk\":%s,"
         "\"bmpOk\":%s,"
+        "\"loraOk\":%s,"
+        "\"sdOk\":%s,"
 
         "\"telemetryMs\":%u,"
 
@@ -523,31 +869,26 @@ void WifiAP::sendJsonStatus(){
 
         navigation.battery,
 
-        // wifiEnabled
         systemConfig.wifiEnabled ? "true" : "false",
 
-        // telemetryWeb
         systemConfig.telemetryWebEnabled ? "true" : "false",
 
-        // gpsSat
         navigation.satellites,
 
-        // imuOk
+        static_cast<uint8_t>(status.gpsStatus),
+
         status.imuOk ? "true" : "false",
 
-        // gpsOk
-        status.gpsOk ? "true" : "false",
-
-        // bmpOk
         status.bmpOk ? "true" : "false",
 
-        // telemetryMs
+        status.loraOk ? "true" : "false",
+
+        status.sdOk ? "true" : "false",
+
         systemConfig.telemetryPeriodMs,
 
-        // batteryLimit
         systemConfig.batteryLimit,
 
-        // wifiClients
         WiFi.softAPgetStationNum()
     );
 
@@ -602,11 +943,23 @@ void WifiAP::sendJsonConfig(){
         "\"rollOffset\":%.2f,"
         "\"yawOffset\":%.2f,"
 
+        "\"pitchKp\":%.4f,"
+        "\"pitchKi\":%.4f,"
+        "\"pitchKd\":%.4f,"
+
+        "\"rollKp\":%.4f,"
+        "\"rollKi\":%.4f,"
+        "\"rollKd\":%.4f,"
+
+        "\"yawKp\":%.4f,"
+        "\"yawKi\":%.4f,"
+        "\"yawKd\":%.4f,"
+
         "\"batteryLimit\":%.2f,"
         "\"telemetryMs\":%u,"
-        "\"flightTime\":%u,"
+        "\"lowBatteryTelemetryMs\":%u,"
 
-        "\"wifiEnabled\":%s,"
+        "\"preFlightTelemetryEnabled\":%s,"
         "\"telemetryWeb\":%s,"
 
         "\"frequency\":%.3f,"
@@ -623,11 +976,23 @@ void WifiAP::sendJsonConfig(){
         offsets.roll,
         offsets.yaw,
 
+        pidConfig.pitch.kp,
+        pidConfig.pitch.ki,
+        pidConfig.pitch.kd,
+
+        pidConfig.roll.kp,
+        pidConfig.roll.ki,
+        pidConfig.roll.kd,
+
+        pidConfig.yaw.kp,
+        pidConfig.yaw.ki,
+        pidConfig.yaw.kd,
+
         systemConfig.batteryLimit,
         systemConfig.telemetryPeriodMs,
-        systemConfig.estimatedFlightTimeMin,
+        systemConfig.lowBatteryTelemetryPeriodMs,
 
-        systemConfig.wifiEnabled ? "true" : "false",
+        systemConfig.preFlightTelemetryEnabled ? "true" : "false",
         systemConfig.telemetryWebEnabled ? "true" : "false",
 
         systemConfig.lora.frequency,
@@ -645,9 +1010,42 @@ void WifiAP::sendJsonConfig(){
         statusJson
     );
 }
+void WifiAP::handleTelemetry(){
+
+    server.send(
+        200,
+        "application/json",
+        telemetryJson ? telemetryJson : "{}"
+    );
+
+    // Nada disparava SystemEvent::TELEMETRY_REQUEST antes -- por isso
+    // telemetryJson ficava sempre nullptr e a pagina Console so via "{}".
+    // So pede um pacote novo se nao houver outro evento (offset/sistema/
+    // lora/log) ja esperando para nao atropela-lo -- pendingEvent guarda
+    // só 1 evento por vez.
+    if(pendingEvent == SystemEvent::NONE)
+    {
+        pendingEvent = SystemEvent::TELEMETRY_REQUEST;
+    }
+}
+void WifiAP::setTelemetryJson(const char* json){
+    telemetryJson = json;
+}
 void WifiAP::setFlightMode(FlightMode mode){
     systemConfig.flightMode = mode;
 }
 FlightMode WifiAP::getFlightMode() const{
     return systemConfig.flightMode;
+}
+const char* WifiAP::getRequestedLog() const
+{
+    return requestedLog;
+}
+const char* WifiAP::getRenameTarget() const
+{
+    return renameTarget;
+}
+void WifiAP::attachSdLogger(SdLogger* logger)
+{
+    sdLogger = logger;
 }

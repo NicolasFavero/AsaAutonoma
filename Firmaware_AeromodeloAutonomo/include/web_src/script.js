@@ -43,67 +43,6 @@ async function checkSd(){
 
     }
 }
-async function startFlight(){
-
-    const problems = [];
-
-    if(lastStatus){
-
-        if(!lastStatus.imuOk)
-            problems.push("• IMU");
-
-        if(!lastStatus.bmpOk)
-            problems.push("• BMP280");
-
-        if(!lastStatus.loraOk)
-            problems.push("• LoRa");
-
-        if(!lastStatus.sdOk)
-            problems.push("• Cartão SD");
-
-        switch(lastStatus.gpsStatus){
-
-            case 0:
-                problems.push("• GPS sem comunicação");
-                break;
-
-            case 1:
-                problems.push("• GPS sem FIX");
-                break;
-
-            case 2:
-                problems.push("• GPS com FIX insuficiente");
-                break;
-        }
-    }
-
-    if(problems.length){
-
-        const msg =
-            "Os seguintes módulos apresentam problemas:\n\n" +
-            problems.join("\n") +
-            "\n\nDeseja continuar mesmo assim?";
-
-        if(!confirm(msg))
-            return;
-    }
-
-    if(!confirm(
-        "Iniciar voo?\n\nAs configurações serão bloqueadas até reiniciar."
-    ))
-        return;
-
-    try{
-
-        alertSuccess(await POST("/api/start"));
-
-    }
-    catch(error){
-
-        alertError(error);
-
-    }
-}
 /* ---------- DOM helpers ---------- */
 
 function text(id, value){
@@ -282,6 +221,49 @@ function initializePage(page){
     );
 
     break;
+
+    case "system":
+
+    loadConfig();
+
+    $("saveSystem")?.addEventListener(
+        "click",
+        () => save("system")
+    );
+
+    break;
+
+    case "lora":
+
+    loadConfig();
+
+    $("saveLora")?.addEventListener(
+        "click",
+        () => save("lora")
+    );
+
+    break;
+
+    case "flight":
+
+    loadStatus();
+
+    $("startFlight")?.addEventListener(
+        "click",
+        startFlight
+    );
+
+    $("endFlight")?.addEventListener(
+        "click",
+        endFlight
+    );
+
+    $("restartESP")?.addEventListener(
+        "click",
+        restartESP
+    );
+
+    break;
     }
 }
 let tareBusy = false;
@@ -456,6 +438,8 @@ function fillStatus(data){
 
   setGpsLed(data.gpsStatus);
 
+  updateCountdownUi(data.flightMode);
+
   text("pitchNow", num(data.pitch));
   text("rollNow", num(data.roll));
   text("yawNow", num(data.yaw));
@@ -594,15 +578,134 @@ async function save(type){
 }
 /* ---------- Flight control ---------- */
 
-async function startFlight(){
-  if(!confirm("Iniciar voo? As configurações serão bloqueadas até reiniciar.")) return;
+const COUNTDOWN_DURATION_S = 10;
+let countdownActive = false;
+let countdownTimer = null;
 
-  try{
-    alertSuccess(await POST("/api/start"));
-  }
-  catch(error){
-    alertError(error);
-  }
+// A contagem aqui e so visual: o firmware manda o estado COUNTDOWN
+// assim que /api/start e aceito, e quem decide quando vira FLIGHT de
+// verdade e o seu codigo no main.cpp. Essa UI so mostra um numero
+// decrescendo enquanto o polling de /api/status continuar reportando
+// "COUNTDOWN", e some sozinha assim que o modo mudar (pra FLIGHT ou
+// de volta pra CONFIG) -- por isso nunca fica "dessincronizada" por
+// muito tempo, mesmo que COUNTDOWN_DURATION_S nao bata exatamente
+// com a duracao real da contagem no firmware.
+function updateCountdownUi(mode){
+    const card = $("countdownCard");
+
+    if(!card)
+        return;
+
+    if(mode === "COUNTDOWN"){
+
+        if(countdownActive)
+            return;
+
+        countdownActive = true;
+        card.style.display = "";
+
+        let secondsLeft = COUNTDOWN_DURATION_S;
+        text("countdownNumber", secondsLeft);
+
+        countdownTimer = setInterval(() => {
+
+            secondsLeft--;
+            text("countdownNumber", Math.max(secondsLeft, 0));
+
+            if(secondsLeft <= 0){
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+
+        }, 1000);
+
+        return;
+    }
+
+    if(countdownActive){
+        countdownActive = false;
+
+        if(countdownTimer){
+            clearInterval(countdownTimer);
+            countdownTimer = null;
+        }
+
+        card.style.display = "none";
+    }
+}
+
+async function startFlight(){
+
+    const problems = [];
+
+    if(lastStatus){
+
+        if(!lastStatus.imuOk)
+            problems.push("• IMU");
+
+        if(!lastStatus.bmpOk)
+            problems.push("• BMP280");
+
+        if(!lastStatus.loraOk)
+            problems.push("• LoRa");
+
+        if(!lastStatus.sdOk)
+            problems.push("• Cartão SD");
+
+        switch(lastStatus.gpsStatus){
+
+            case 0:
+                problems.push("• GPS sem comunicação");
+                break;
+
+            case 1:
+                problems.push("• GPS sem FIX");
+                break;
+
+            case 2:
+                problems.push("• GPS com FIX insuficiente");
+                break;
+        }
+    }
+
+    if(problems.length){
+
+        const msg =
+            "Os seguintes módulos apresentam problemas:\n\n" +
+            problems.join("\n") +
+            "\n\nDeseja continuar mesmo assim?";
+
+        if(!confirm(msg))
+            return;
+    }
+
+    if(!confirm(
+        "Iniciar voo?\n\nAs configurações serão bloqueadas até reiniciar."
+    ))
+        return;
+
+    try{
+        alertSuccess(await POST("/api/start"));
+        await loadStatus();
+    }
+    catch(error){
+        alertError(error);
+    }
+}
+
+async function endFlight(){
+    if(!confirm(
+        "Finalizar voo?\n\nO modo passará para LANDED."
+    ))
+        return;
+
+    try{
+        alertSuccess(await POST("/api/end"));
+        await loadStatus();
+    }
+    catch(error){
+        alertError(error);
+    }
 }
 
 async function restartESP(){
@@ -677,6 +780,10 @@ function fillLogs(files){
                         Baixar
                     </button>
 
+                    <button class="secondary" onclick="renameLog('${file}')">
+                        Renomear
+                    </button>
+
                     <button
                         class="danger"
                         onclick="deleteLog('${file}')">
@@ -699,6 +806,48 @@ function downloadLog(file){
         "/api/logs/download?file=" +
         encodeURIComponent(file);
 
+}
+
+async function renameLog(file){
+
+    let newName = prompt(
+        "Novo nome para \"" + file + "\":",
+        file
+    );
+
+    if(newName === null)
+        return;
+
+    newName = newName.trim();
+
+    if(!newName || newName === file)
+        return;
+
+    if(!newName.toLowerCase().endsWith(".csv"))
+        newName += ".csv";
+
+    const data = new URLSearchParams();
+
+    data.append("file", file);
+    data.append("newName", newName);
+
+    try{
+
+        alertSuccess(
+            await POST(
+                "/api/logs/rename",
+                data
+            )
+        );
+
+        loadLogs();
+
+    }
+    catch(error){
+
+        alertError(error);
+
+    }
 }
 
 async function deleteLog(file){
