@@ -42,8 +42,8 @@ class PID {
         struct ServoParamters{
 
             float setAngle = 90.0f;
-            float safeAngle;
-            float targetAngle;
+            float safeAngle = 90.0f;
+            float targetAngle = 90.0f;
             float neutralAngle = 90.0f;
         };
 

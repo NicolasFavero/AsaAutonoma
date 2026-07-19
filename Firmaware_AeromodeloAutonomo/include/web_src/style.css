@@ -97,9 +97,12 @@ label.inline{display:inline-flex;align-items:center;gap:8px;margin-left:18px;fon
 
 .actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px}
 
+.diagCell{display:flex;align-items:center;justify-content:flex-end;gap:10px}
+
 .led{display:inline-block;width:14px;height:14px;border-radius:50%;background:#8a8a8a}
 .led.ok{background:var(--green);box-shadow:0 0 8px var(--green)}
 .led.error{background:var(--red);box-shadow:0 0 8px var(--red)}
+.led.untested{background:#8a8a8a;box-shadow:none}
 
 .led.gps-red{background:var(--red);box-shadow:0 0 8px var(--red)}
 .led.gps-orange{background:#f5a524;box-shadow:0 0 8px #f5a524}
@@ -107,6 +110,12 @@ label.inline{display:inline-flex;align-items:center;gap:8px;margin-left:18px;fon
 .led.gps-green{background:var(--green);box-shadow:0 0 8px var(--green)}
 
 .value{font-weight:600;color:var(--primary)}
+
+.tag{
+  display:inline-block;font-size:12px;font-weight:600;
+  padding:2px 8px;border-radius:20px;margin-top:4px;
+}
+.tag-warn{background:rgba(245,165,36,.15);color:#f5a524;border:1px solid #f5a524}
 
 p{color:var(--muted);line-height:1.5}
 
@@ -124,3 +133,41 @@ pre.console{
 th{padding:10px 4px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border)}
 
 .buttonRow{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+
+#countdownNumber.launch{color:var(--green)}
+
+#toastBox{
+  position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+  display:flex;flex-direction:column;gap:8px;z-index:100;
+  align-items:center;width:100%;pointer-events:none;
+}
+.toast{
+  background:var(--card);border:1px solid var(--border);color:var(--text);
+  padding:10px 18px;border-radius:20px;box-shadow:var(--shadow);
+  font-size:14px;opacity:0;transform:translateY(10px);
+  transition:opacity .2s ease,transform .2s ease;max-width:90vw;text-align:center;
+}
+.toast.show{opacity:1;transform:translateY(0)}
+
+.tag-info{background:rgba(21,101,192,.1);color:var(--primary);border:1px solid var(--primary)}
+
+.logsUpdated{font-size:13px;margin-top:14px;text-align:center}
+
+/* Modal (substitui alert/confirm/prompt nativos do navegador, que
+   sempre mostram "<endereço> diz:" antes da mensagem -- isso e o
+   proprio browser, nao da pra estilizar, entao a solucao e ter um
+   dialogo proprio com a cara do resto da interface). */
+#modalOverlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.5);
+  display:flex;align-items:center;justify-content:center;padding:20px;
+  z-index:200;opacity:0;pointer-events:none;transition:opacity .15s ease;
+}
+#modalOverlay.open{opacity:1;pointer-events:auto}
+.modalBox{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:20px 22px;max-width:360px;width:100%;
+}
+.modalBox p{color:var(--text);margin-bottom:16px;white-space:pre-line;line-height:1.5}
+.modalBox input{margin-bottom:16px}
+.modalActions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.modalActions button{min-width:100px}

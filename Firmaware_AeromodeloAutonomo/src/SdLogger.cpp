@@ -1,4 +1,5 @@
 #include "SdLogger.h"
+#include <esp_heap_caps.h>
 
 static bool endsWithCsv(const char* name) {
     size_t len = strlen(name);
@@ -43,6 +44,31 @@ bool SdLogger::createFile() {
     Serial.println(currentFile);
 
     return true;
+}
+bool SdLogger::selfTest() {
+    // Teste independente do log de voo -- usa um arquivo proprio
+    // (testeSD.txt) em vez do "file"/fileOpen usados por
+    // createFile()/saveLine(). Antes o teste reaproveitava
+    // saveLine(), que só escreve se ja existir um arquivo de voo
+    // aberto (fileOpen==true) -- como isso só acontece quando o
+    // voo comeca de verdade, testar o SD antes do voo sempre dava
+    // falso negativo mesmo com o cartao funcionando.
+
+    if (!mounted && !sd.begin(csPin, SD_SCK_MHZ(20)))
+        return false;
+
+    mounted = true;
+
+    SdFile testFile;
+
+    if (!testFile.open("/testeSD.txt", O_WRITE | O_CREAT | O_TRUNC))
+        return false;
+
+    bool ok = testFile.println("Teste de SD OK") > 0;
+
+    testFile.close();
+
+    return ok;
 }
 bool SdLogger::openFile() {
 
@@ -109,6 +135,96 @@ bool SdLogger::saveLine(const char* line) {
 
     return true;
 }
+
+bool SdLogger::beginBuffer(size_t capacityBytes) {
+
+    if (buffer != nullptr)
+        return true; // ja alocado, nao aloca de novo
+
+    // Tenta PSRAM primeiro -- tem muito mais espaço livre que a RAM
+    // interna do ESP32-S3 e esse buffer nao precisa ser velocissimo,
+    // so segura os dados entre um flush e outro. Se a placa nao tiver
+    // PSRAM (ou a alocacao falhar por qualquer motivo), cai pra RAM
+    // interna normal: o buffer funciona do mesmo jeito, so com menos
+    // margem antes de forçar um flush.
+    buffer = static_cast<char*>(
+        heap_caps_malloc(capacityBytes, MALLOC_CAP_SPIRAM)
+    );
+
+    if (buffer == nullptr)
+        buffer = static_cast<char*>(malloc(capacityBytes));
+
+    if (buffer == nullptr) {
+        bufferCapacity = 0;
+        Serial.println("SD BUFFER: falha ao alocar, voltando a escrita direta");
+        return false;
+    }
+
+    bufferCapacity = capacityBytes;
+    bufferUsed = 0;
+
+    return true;
+}
+
+bool SdLogger::bufferLine(const char* line) {
+
+    // Sem buffer disponivel (alocacao falhou ou beginBuffer() nunca
+    // foi chamado): cai no comportamento antigo, escrevendo direto
+    // no cartao a cada linha.
+    if (buffer == nullptr)
+        return saveLine(line);
+
+    if (!fileOpen)
+        return false;
+
+    size_t len = strlen(line);
+
+    // Linha maior que o buffer inteiro: caso patologico, nao ha como
+    // acumular -- escreve direto pra nao perder o dado.
+    if (len + 1 > bufferCapacity)
+        return saveLine(line);
+
+    // +1 do '\n' que separa as linhas dentro do buffer. Se nao
+    // couber mais, faz o flush de seguranca antes (essa e a unica
+    // escrita real no cartao durante o voo -- acontece a cada
+    // bufferCapacity bytes acumulados, bem mais raro que a cada
+    // 100ms como era antes).
+    if (bufferUsed + len + 1 > bufferCapacity) {
+
+        if (!flushBuffer())
+            return false;
+    }
+
+    memcpy(buffer + bufferUsed, line, len);
+    bufferUsed += len;
+
+    buffer[bufferUsed] = '\n';
+    bufferUsed += 1;
+
+    return true;
+}
+
+bool SdLogger::flushBuffer() {
+
+    if (buffer == nullptr || bufferUsed == 0)
+        return true; // nada acumulado pra gravar
+
+    if (!fileOpen)
+        return false;
+
+    bool ok = (file.write(buffer, bufferUsed) == bufferUsed);
+
+    if (!ok && reopenCurrentFile())
+        ok = (file.write(buffer, bufferUsed) == bufferUsed);
+
+    if (ok)
+        ok = file.sync();
+
+    bufferUsed = 0;
+
+    return ok;
+}
+
 void SdLogger::closeFile() {
     if (!fileOpen) {
         return;

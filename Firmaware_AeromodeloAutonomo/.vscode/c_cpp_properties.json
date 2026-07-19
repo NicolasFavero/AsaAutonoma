@@ -824,6 +824,7 @@
                 "ARDUINO_USB_MSC_ON_BOOT=0",
                 "ARDUINO_USB_DFU_ON_BOOT=0",
                 "ICM_20948_USE_DMP",
+                "BOARD_HAS_PSRAM",
                 "CJSON_CIRCULAR_LIMIT=10000",
                 "CJSON_NESTING_LIMIT=1000",
                 "ESP32_ARDUINO_LIB_BUILDER",

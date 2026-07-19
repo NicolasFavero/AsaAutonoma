@@ -311,6 +311,10 @@ void WifiAP::configureRoutes(){
     {
         handleCheckSd();
     });
+    server.on("/api/checklora", HTTP_POST, [this]()
+    {
+        handleCheckLora();
+    });
     server.on("/api/start", HTTP_POST, [this]()
     {
         handleStartFlight();
@@ -318,6 +322,14 @@ void WifiAP::configureRoutes(){
     server.on("/api/end", HTTP_POST, [this]()
     {
         handleEndFlight();
+    });
+    server.on("/api/deactivate", HTTP_POST, [this]()
+    {
+        handleDeactivateFlight();
+    });
+    server.on("/api/reset", HTTP_POST, [this]()
+    {
+        handleResetFlight();
     });
     server.on("/api/logs", HTTP_GET, [this]()
     {
@@ -473,9 +485,9 @@ void WifiAP::handleSystem(){
         systemConfig.estimatedFlightTimeMin =
             server.arg("flightTime").toInt();
 
-    if(server.hasArg("web"))
-        systemConfig.telemetryWebEnabled =
-            server.arg("web") == "1";
+    if(server.hasArg("preFlightTelemetry"))
+        systemConfig.preFlightTelemetryEnabled =
+            server.arg("preFlightTelemetry") == "1";
 
     if(server.hasArg("wifi"))
         systemConfig.wifiEnabled =
@@ -547,6 +559,22 @@ void WifiAP::handleCheckSd()
         "SD Test Requested"
     );
 }
+void WifiAP::handleCheckLora()
+{
+    if(systemConfig.flightMode != FlightMode::CONFIG)
+    {
+        sendJsonError(
+            "Configuration Locked"
+        );
+        return;
+    }
+
+    pendingEvent = SystemEvent::CHECK_LORA;
+
+    sendJsonSuccess(
+        "LoRa Test Requested"
+    );
+}
 void WifiAP::handleStartFlight()
 {
     if(systemConfig.flightMode != FlightMode::CONFIG)
@@ -580,6 +608,49 @@ void WifiAP::handleEndFlight()
 
     sendJsonSuccess(
         "Flight Ended"
+    );
+}
+void WifiAP::handleDeactivateFlight()
+{
+    // Botao de emergencia: forca o modo para LANDED em qualquer
+    // situacao (CONFIG, COUNTDOWN ou FLIGHT), sem as restricoes do
+    // "Finalizar Voo" normal. Serve para travar o sistema em modo
+    // seguro mesmo que o fluxo normal de voo nao tenha sido usado.
+    if(systemConfig.flightMode == FlightMode::LANDED)
+    {
+        sendJsonError(
+            "Already Landed"
+        );
+        return;
+    }
+
+    pendingEvent =
+        SystemEvent::DEACTIVATE_FLIGHT;
+
+    sendJsonSuccess(
+        "Flight Deactivated"
+    );
+}
+void WifiAP::handleResetFlight()
+{
+    // Reativa o voo sem precisar reiniciar o ESP32: só permitido a
+    // partir de LANDED (depois de um voo finalizado/cancelado).
+    // Volta para CONFIG, o que automaticamente libera offsets/PID/
+    // sistema/LoRa pra edicao de novo (todos os handlers ja travam
+    // com base em flightMode == CONFIG).
+    if(systemConfig.flightMode != FlightMode::LANDED)
+    {
+        sendJsonError(
+            "Not Landed"
+        );
+        return;
+    }
+
+    pendingEvent =
+        SystemEvent::RESET_FLIGHT;
+
+    sendJsonSuccess(
+        "Flight Reset"
     );
 }
 void WifiAP::handleRestart(){
@@ -785,6 +856,18 @@ void WifiAP::handleDownloadLog(){
 void WifiAP::sendJsonStatus(){
     const char* mode;
 
+    // Nome do log que esta sendo escrito agora (sem a barra inicial,
+    // para bater com os nomes que /api/logs devolve) -- usado pelo
+    // front-end pra marcar esse arquivo como "Em andamento" na pagina
+    // de logs. Vazio quando nao ha log aberto no momento.
+    const char* currentLog =
+        (sdLogger != nullptr && sdLogger->isOpen())
+            ? sdLogger->getFileName()
+            : "";
+
+    if(currentLog[0] == '/')
+        currentLog++;
+
     switch(systemConfig.flightMode)
     {
         case FlightMode::CONFIG:
@@ -833,7 +916,6 @@ void WifiAP::sendJsonStatus(){
         "\"battery\":%.2f,"
 
         "\"wifiEnabled\":%s,"
-        "\"telemetryWeb\":%s,"
 
         "\"gpsSat\":%u,"
         "\"gpsStatus\":%u,"
@@ -841,13 +923,19 @@ void WifiAP::sendJsonStatus(){
         "\"imuOk\":%s,"
         "\"bmpOk\":%s,"
         "\"loraOk\":%s,"
+        "\"loraTested\":%s,"
         "\"sdOk\":%s,"
+        "\"sdTested\":%s,"
 
         "\"telemetryMs\":%u,"
 
         "\"batteryLimit\":%.2f,"
 
-        "\"wifiClients\":%u"
+        "\"wifiClients\":%u,"
+
+        "\"currentLog\":\"%s\","
+
+        "\"countdownRemainingMs\":%lu"
 
         "}",
 
@@ -871,8 +959,6 @@ void WifiAP::sendJsonStatus(){
 
         systemConfig.wifiEnabled ? "true" : "false",
 
-        systemConfig.telemetryWebEnabled ? "true" : "false",
-
         navigation.satellites,
 
         static_cast<uint8_t>(status.gpsStatus),
@@ -883,13 +969,21 @@ void WifiAP::sendJsonStatus(){
 
         status.loraOk ? "true" : "false",
 
+        status.loraTested ? "true" : "false",
+
         status.sdOk ? "true" : "false",
+
+        status.sdTested ? "true" : "false",
 
         systemConfig.telemetryPeriodMs,
 
         systemConfig.batteryLimit,
 
-        WiFi.softAPgetStationNum()
+        WiFi.softAPgetStationNum(),
+
+        currentLog,
+
+        countdownRemainingMs
     );
 
     server.send(
@@ -960,7 +1054,6 @@ void WifiAP::sendJsonConfig(){
         "\"lowBatteryTelemetryMs\":%u,"
 
         "\"preFlightTelemetryEnabled\":%s,"
-        "\"telemetryWeb\":%s,"
 
         "\"frequency\":%.3f,"
         "\"bandwidth\":%.1f,"
@@ -993,7 +1086,6 @@ void WifiAP::sendJsonConfig(){
         systemConfig.lowBatteryTelemetryPeriodMs,
 
         systemConfig.preFlightTelemetryEnabled ? "true" : "false",
-        systemConfig.telemetryWebEnabled ? "true" : "false",
 
         systemConfig.lora.frequency,
         systemConfig.lora.bandwidth,
@@ -1033,6 +1125,9 @@ void WifiAP::setTelemetryJson(const char* json){
 }
 void WifiAP::setFlightMode(FlightMode mode){
     systemConfig.flightMode = mode;
+}
+void WifiAP::setCountdownRemaining(unsigned long ms){
+    countdownRemainingMs = ms;
 }
 FlightMode WifiAP::getFlightMode() const{
     return systemConfig.flightMode;

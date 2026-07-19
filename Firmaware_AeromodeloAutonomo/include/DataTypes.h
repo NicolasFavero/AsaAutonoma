@@ -118,9 +118,12 @@ enum class SystemEvent : uint8_t{
     LORA_CHANGED,
 
     CHECK_SD,
+    CHECK_LORA,
 
     START_FLIGHT,
     END_FLIGHT,
+    DEACTIVATE_FLIGHT,
+    RESET_FLIGHT,
 
     DELETE_ALL_LOGS,
     DELETE_LOG,
@@ -142,8 +145,6 @@ struct SystemConfig
 
     bool wifiEnabled = true;
 
-    bool telemetryWebEnabled = false;
-
     bool preFlightTelemetryEnabled = false;
 
     FlightMode flightMode = FlightMode::CONFIG;
@@ -162,8 +163,10 @@ struct SystemStatus
     bool adsOk = false;
 
     bool loraOk = false;
+    bool loraTested = false;
 
     bool sdOk = false;
+    bool sdTested = false;
 
     bool wifiRunning = false;
 

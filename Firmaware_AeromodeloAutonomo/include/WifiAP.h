@@ -73,6 +73,14 @@ public:
 
     void setFlightMode(FlightMode mode);
 
+    // Tempo restante (ms) da contagem regressiva atual, calculado no
+    // main.cpp a partir do countdownStartMillis real -- assim o
+    // front-end so exibe o numero que vem do firmware em vez de
+    // rodar um timer local proprio (que desincroniza facil: ao
+    // navegar pra outra pagina e voltar, reativar o voo, etc). Vale
+    // 0 fora do modo COUNTDOWN.
+    void setCountdownRemaining(unsigned long ms);
+
     FlightMode getFlightMode() const;
     /*
     ==========================================================
@@ -99,6 +107,8 @@ public:
     private:
 
         SdLogger* sdLogger = nullptr;
+
+        unsigned long countdownRemainingMs = 0;
 
         char requestedLog[32];
         char renameTarget[32];
@@ -177,9 +187,15 @@ public:
 
         void handleCheckSd();
 
+        void handleCheckLora();
+
         void handleStartFlight();
 
         void handleEndFlight();
+
+        void handleDeactivateFlight();
+
+        void handleResetFlight();
 
         void handleLogs();
 

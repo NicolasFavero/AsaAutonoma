@@ -43,6 +43,23 @@ async function checkSd(){
 
     }
 }
+async function testLora(){
+
+    try{
+
+        const json = await POST("/api/checklora");
+
+        alertSuccess(json);
+
+        await loadStatus();
+
+    }
+    catch(error){
+
+        alertError(error);
+
+    }
+}
 /* ---------- DOM helpers ---------- */
 
 function text(id, value){
@@ -69,6 +86,24 @@ function led(id, state){
   if(!e) return;
   e.classList.toggle("ok", state);
   e.classList.toggle("error", !state);
+}
+
+// Para status que só fazem sentido depois de um teste manual (SD, LoRa):
+// antes de testar, fica cinza (nem ok, nem erro) -- assim uma falha
+// nunca-testada nao aparenta ser um bug ("tudo vermelho" no primeiro boot).
+function ledTri(id, tested, ok){
+  const e = $(id);
+  if(!e) return;
+
+  if(!tested){
+    e.classList.remove("ok", "error");
+    e.classList.add("untested");
+    return;
+  }
+
+  e.classList.remove("untested");
+  e.classList.toggle("ok", ok);
+  e.classList.toggle("error", !ok);
 }
 function setGpsLed(status){
 
@@ -108,11 +143,103 @@ function num(v, digits = 2){
 
 function alertError(error){
   console.error(error);
-  alert("Erro de comunicação.");
+  customAlert("Erro de comunicação.");
 }
 
 function alertSuccess(json){
-  if(json && json.message) alert(json.message);
+  if(json && json.message) toast(json.message);
+}
+
+let toastTimer = null;
+function toast(message, duration = 2500){
+  const box = $("toastBox");
+  if(!box) return;
+
+  box.innerHTML = "";
+
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = message;
+  box.appendChild(el);
+
+  // Força um reflow antes de adicionar "show" pra garantir que a
+  // transição de opacidade/translateY toque, mesmo em toasts
+  // seguidos.
+  void el.offsetWidth;
+  el.classList.add("show");
+
+  if(toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), duration);
+}
+
+/* ---------- Modal (substitui alert/confirm/prompt nativos) ---------- */
+// alert/confirm/prompt do navegador sempre mostram algo como
+// "192.168.4.1 diz:" antes da mensagem -- isso vem do proprio
+// navegador, a pagina nao tem como mudar esse texto. A solucao e ter
+// um dialogo proprio, com a cara do resto da interface, no lugar
+// desses tres.
+function showModal({ message, showInput = false, inputValue = "", confirmText = "OK", cancelText = null }){
+    return new Promise(resolve => {
+        const overlay = $("modalOverlay");
+        const box = $("modalBox");
+
+        if(!overlay || !box){
+            // Sem modal na pagina (nao deveria acontecer): cai pro
+            // dialogo nativo pra nao travar a acao do usuario.
+            if(showInput) resolve(window.prompt(message, inputValue));
+            else if(cancelText) resolve(window.confirm(message));
+            else{ window.alert(message); resolve(true); }
+            return;
+        }
+
+        const safeValue = String(inputValue).replace(/"/g, "&quot;");
+
+        box.innerHTML = `
+            <p>${message}</p>
+            ${showInput ? `<input id="modalInput" type="text" value="${safeValue}">` : ""}
+            <div class="modalActions">
+                ${cancelText ? `<button class="secondary" id="modalCancel">${cancelText}</button>` : ""}
+                <button class="primary" id="modalConfirm">${confirmText}</button>
+            </div>
+        `;
+
+        overlay.classList.add("open");
+
+        const input = $("modalInput");
+        input?.focus();
+        input?.select();
+
+        function close(result){
+            overlay.classList.remove("open");
+            resolve(result);
+        }
+
+        $("modalConfirm").onclick =
+            () => close(showInput ? (input?.value ?? "") : true);
+
+        $("modalCancel")?.addEventListener(
+            "click",
+            () => close(showInput ? null : false)
+        );
+    });
+}
+
+function customAlert(message){
+    return showModal({ message, confirmText: "OK" });
+}
+
+function customConfirm(message){
+    return showModal({ message, confirmText: "Confirmar", cancelText: "Cancelar" });
+}
+
+function customPrompt(message, defaultValue = ""){
+    return showModal({
+        message,
+        showInput: true,
+        inputValue: defaultValue,
+        confirmText: "OK",
+        cancelText: "Cancelar",
+    });
 }
 
 /* ---------- Menu ---------- */
@@ -247,6 +374,7 @@ function initializePage(page){
     case "flight":
 
     loadStatus();
+    startStatus();
 
     $("startFlight")?.addEventListener(
         "click",
@@ -256,6 +384,16 @@ function initializePage(page){
     $("endFlight")?.addEventListener(
         "click",
         endFlight
+    );
+
+    $("cancelCountdown")?.addEventListener(
+        "click",
+        cancelFlight
+    );
+
+    $("resetFlight")?.addEventListener(
+        "click",
+        resetFlight
     );
 
     $("restartESP")?.addEventListener(
@@ -385,6 +523,7 @@ function initializeLiveStatus(){
 
   $("refreshStatus")?.addEventListener("click", loadStatus);
   $("checkSd")?.addEventListener("click", checkSd);
+  $("testLora")?.addEventListener("click", testLora);
 }
 
 function startStatus(){
@@ -433,12 +572,14 @@ function fillStatus(data){
 
   led("imuLed", data.imuOk);
   led("bmpLed", data.bmpOk);
-  led("loraLed", data.loraOk);
-  led("sdLed", data.sdOk);
+  ledTri("loraLed", data.loraTested, data.loraOk);
+  ledTri("sdLed", data.sdTested, data.sdOk);
 
   setGpsLed(data.gpsStatus);
 
-  updateCountdownUi(data.flightMode);
+  updateCountdownUi(data);
+  updateFlightActiveUi(data.flightMode);
+  updateFlightButtonsUi(data.flightMode);
 
   text("pitchNow", num(data.pitch));
   text("rollNow", num(data.roll));
@@ -497,11 +638,6 @@ function fillConfig(cfg){
         cfg.preFlightTelemetryEnabled
     );
 
-    checked(
-        "telemetryWeb",
-        cfg.telemetryWeb
-    );
-
     valueField(
         "syncWord",
         Number(cfg.syncWord).toString(16).toUpperCase()
@@ -530,7 +666,6 @@ const SAVE_FORMS = {
       },
       checks: {
           preFlightTelemetry: "preFlightTelemetryEnabled",
-          web: "telemetryWeb",
       },
   },
   lora: {
@@ -562,9 +697,15 @@ async function save(type){
 
         if(type === "offset"){
 
-            valueField("pitchOffset", "0");
-            valueField("rollOffset", "0");
-            valueField("yawOffset", "0");
+            // Antes o campo era forçado pra "0" aqui, o que fazia
+            // "Offsets Atuais" mentir sobre o valor realmente salvo
+            // a partir do primeiro save (so ficava correto de novo
+            // depois de zerar na mao). Agora busca a config de
+            // verdade no firmware -- o campo só mostra 0 quando o
+            // offset salvo for mesmo 0 (ex: logo apos um flash novo).
+            // Um pequeno atraso da tempo do firmware processar o
+            // evento antes de reler.
+            setTimeout(loadConfig, 300);
 
             await loadStatus();
         }
@@ -578,60 +719,75 @@ async function save(type){
 }
 /* ---------- Flight control ---------- */
 
-const COUNTDOWN_DURATION_S = 10;
-let countdownActive = false;
-let countdownTimer = null;
-
-// A contagem aqui e so visual: o firmware manda o estado COUNTDOWN
-// assim que /api/start e aceito, e quem decide quando vira FLIGHT de
-// verdade e o seu codigo no main.cpp. Essa UI so mostra um numero
-// decrescendo enquanto o polling de /api/status continuar reportando
-// "COUNTDOWN", e some sozinha assim que o modo mudar (pra FLIGHT ou
-// de volta pra CONFIG) -- por isso nunca fica "dessincronizada" por
-// muito tempo, mesmo que COUNTDOWN_DURATION_S nao bata exatamente
-// com a duracao real da contagem no firmware.
-function updateCountdownUi(mode){
+// A contagem regressiva antes era um timer local de 10s, desacoplado
+// do firmware -- isso dessincronizava fácil (navegar pra outra
+// página e voltar durante a contagem, reativar o voo e iniciar de
+// novo, etc), fazendo o card sumir cedo demais. Agora o numero vem
+// pronto do firmware a cada /api/status (countdownRemainingMs), essa
+// função só exibe o que chegou -- sem timer local, sem estado que
+// possa ficar "preso" de uma contagem pra outra.
+function updateCountdownUi(data){
     const card = $("countdownCard");
 
     if(!card)
         return;
 
-    if(mode === "COUNTDOWN"){
+    const inCountdown = data.flightMode === "COUNTDOWN";
 
-        if(countdownActive)
-            return;
+    card.style.display = inCountdown ? "" : "none";
 
-        countdownActive = true;
-        card.style.display = "";
-
-        let secondsLeft = COUNTDOWN_DURATION_S;
-        text("countdownNumber", secondsLeft);
-
-        countdownTimer = setInterval(() => {
-
-            secondsLeft--;
-            text("countdownNumber", Math.max(secondsLeft, 0));
-
-            if(secondsLeft <= 0){
-                clearInterval(countdownTimer);
-                countdownTimer = null;
-            }
-
-        }, 1000);
-
+    if(!inCountdown)
         return;
+
+    text("countdownFile", data.currentLog || "-");
+
+    const numberEl = $("countdownNumber");
+    const secondsLeft = Math.ceil((data.countdownRemainingMs ?? 0) / 1000);
+
+    if(secondsLeft > 0){
+        numberEl?.classList.remove("launch");
+        text("countdownNumber", secondsLeft);
     }
-
-    if(countdownActive){
-        countdownActive = false;
-
-        if(countdownTimer){
-            clearInterval(countdownTimer);
-            countdownTimer = null;
-        }
-
-        card.style.display = "none";
+    else{
+        numberEl?.classList.add("launch");
+        text("countdownNumber", "LANÇAR!");
     }
+}
+
+// Card separado, visivel so durante o FLIGHT de verdade -- o
+// countdownCard some assim que o modo deixa de ser COUNTDOWN
+// (inclusive quando vira FLIGHT), entao esse card substitui ele
+// pra deixar claro que o voo esta em andamento.
+function updateFlightActiveUi(mode){
+    const card = $("flightActiveCard");
+
+    if(!card)
+        return;
+
+    card.style.display = (mode === "FLIGHT") ? "" : "none";
+}
+
+// Iniciar Voo so faz sentido em CONFIG (e o unico estado em que
+// /api/start e aceito). Finalizar Voo (na aba Comandos) so aparece
+// durante o FLIGHT -- durante o COUNTDOWN quem cancela e o botao
+// dedicado dentro do proprio card da contagem regressiva.
+function updateFlightButtonsUi(mode){
+    const startBtn = $("startFlight");
+    const endBtn = $("endFlight");
+    const resetBtn = $("resetFlight");
+
+    if(!startBtn || !endBtn)
+        return;
+
+    const canStart = mode === "CONFIG";
+    const canEnd = mode === "FLIGHT";
+    const canReset = mode === "LANDED";
+
+    startBtn.style.display = canStart ? "" : "none";
+    endBtn.style.display = canEnd ? "" : "none";
+
+    if(resetBtn)
+        resetBtn.style.display = canReset ? "" : "none";
 }
 
 async function startFlight(){
@@ -647,10 +803,10 @@ async function startFlight(){
             problems.push("• BMP280");
 
         if(!lastStatus.loraOk)
-            problems.push("• LoRa");
+            problems.push(lastStatus.loraTested ? "• LoRa (falhou no teste)" : "• LoRa (ainda não testado)");
 
         if(!lastStatus.sdOk)
-            problems.push("• Cartão SD");
+            problems.push(lastStatus.sdTested ? "• Cartão SD (falhou no teste)" : "• Cartão SD (ainda não testado)");
 
         switch(lastStatus.gpsStatus){
 
@@ -675,13 +831,11 @@ async function startFlight(){
             problems.join("\n") +
             "\n\nDeseja continuar mesmo assim?";
 
-        if(!confirm(msg))
+        if(!(await customConfirm(msg)))
             return;
     }
 
-    if(!confirm(
-        "Iniciar voo?\n\nAs configurações serão bloqueadas até reiniciar."
-    ))
+    if(!(await customConfirm("Iniciar voo? Tem certeza?")))
         return;
 
     try{
@@ -694,13 +848,48 @@ async function startFlight(){
 }
 
 async function endFlight(){
-    if(!confirm(
+    if(!(await customConfirm(
         "Finalizar voo?\n\nO modo passará para LANDED."
-    ))
+    )))
+        return;
+
+    // O backend fecha o arquivo do log ao processar /api/end, entao
+    // currentLog ja vem vazio na resposta/proxima leitura -- captura
+    // o nome AGORA, antes de mandar o POST.
+    const fileName = lastStatus?.currentLog || "";
+
+    try{
+        await POST("/api/end");
+        toast(fileName ? `Voo finalizado em ${fileName}.` : "Voo finalizado.");
+        await loadStatus();
+    }
+    catch(error){
+        alertError(error);
+    }
+}
+
+async function cancelFlight(){
+    if(!(await customConfirm("Cancelar o voo?")))
+        return;
+
+    const fileName = lastStatus?.currentLog || "";
+
+    try{
+        await POST("/api/end");
+        toast(fileName ? `Voo cancelado em ${fileName}.` : "Voo cancelado.");
+        await loadStatus();
+    }
+    catch(error){
+        alertError(error);
+    }
+}
+
+async function resetFlight(){
+    if(!(await customConfirm("Reativar o voo? Isso libera um novo Iniciar Voo sem reiniciar o ESP32.")))
         return;
 
     try{
-        alertSuccess(await POST("/api/end"));
+        alertSuccess(await POST("/api/reset"));
         await loadStatus();
     }
     catch(error){
@@ -709,7 +898,7 @@ async function endFlight(){
 }
 
 async function restartESP(){
-  if(!confirm("Reiniciar ESP32?")) return;
+  if(!(await customConfirm("Reiniciar ESP32?"))) return;
 
   try{
     alertSuccess(await POST("/api/restart"));
@@ -730,7 +919,21 @@ async function loadLogs(){
         // a tabela -- por isso a pagina nunca listava nada.
         const files = await GET_JSON("/api/logs");
 
-        fillLogs(files);
+        // /api/status traz o nome do log em andamento (currentLog,
+        // vazio se nenhum voo estiver gravando agora). Se essa
+        // chamada falhar por qualquer motivo, a lista de logs ainda
+        // e mostrada normalmente, so sem a marcação de "Em andamento".
+        let currentLog = "";
+
+        try{
+            const status = await GET_JSON("/api/status");
+            currentLog = status.currentLog || "";
+        }
+        catch(error){
+            console.error(error);
+        }
+
+        fillLogs(files, currentLog);
 
     }
     catch(error){
@@ -740,7 +943,7 @@ async function loadLogs(){
     }
 }
 
-function fillLogs(files){
+function fillLogs(files, currentLog = ""){
 
     files = files || [];
 
@@ -748,6 +951,11 @@ function fillLogs(files){
 
     if(!table)
         return;
+
+    // O ESP32 nao tem RTC, entao os arquivos em si nao guardam data
+    // real -- isso aqui e so o horario do navegador de quem esta
+    // olhando a pagina agora, pra servir de referencia.
+    text("logsUpdated", "Lista atualizada em " + new Date().toLocaleString("pt-BR"));
 
     if(!files.length){
 
@@ -766,13 +974,18 @@ function fillLogs(files){
 
     for(const file of files){
 
+        const inProgress = currentLog && file === currentLog;
+
         table.insertAdjacentHTML(
             "beforeend",
 
             `
             <tr>
 
-                <td>${file}</td>
+                <td>
+                    ${file}
+                    ${inProgress ? '<br><span class="tag tag-warn">Em andamento</span>' : ""}
+                </td>
 
                 <td>
 
@@ -810,7 +1023,7 @@ function downloadLog(file){
 
 async function renameLog(file){
 
-    let newName = prompt(
+    let newName = await customPrompt(
         "Novo nome para \"" + file + "\":",
         file
     );
@@ -852,9 +1065,9 @@ async function renameLog(file){
 
 async function deleteLog(file){
 
-    if(!confirm(
+    if(!(await customConfirm(
         "Excluir " + file + " ?"
-    ))
+    )))
         return;
 
     const data = new URLSearchParams();
@@ -884,9 +1097,9 @@ async function deleteLog(file){
 }
 async function deleteAllLogs(){
 
-    if(!confirm(
+    if(!(await customConfirm(
         "Excluir TODOS os logs?"
-    ))
+    )))
         return;
 
     try{

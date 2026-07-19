@@ -33,6 +33,8 @@
 //=======================================================================================================================================================
 //OTHERS
 unsigned long lastTelemetryMillis = 0;
+unsigned long countdownStartMillis = 0;
+constexpr unsigned long COUNTDOWN_DURATION_MS = 10000; // mesmo valor do COUNTDOWN_DURATION_S no script.js
 volatile bool newOffsetsAvailable = false;
 volatile bool newPidAvailable = false;
 
@@ -143,9 +145,12 @@ void setup(){
 
 
   while(!sd.begin()) {Serial.println("SD FAIL"); led.red();}
-  while(!sd.createFile()) {Serial.println("ERRO CRIAR ARQUIVO"); led.red();}
-  while(!sd.saveLine(telemetry.getCsvHeader())){Serial.println("Erro aao criar Header"); led.red();}
 
+  // Buffer em RAM/PSRAM pros logs de voo -- ver comentarios em
+  // SdLogger::beginBuffer()/bufferLine(). Se falhar (placa sem PSRAM
+  // ou sem RAM livre suficiente), o firmware continua funcionando,
+  // so volta a escrever direto no SD a cada leitura como antes.
+  sd.beginBuffer();
 
   attitudeQueue = xQueueCreate(1, sizeof(AttitudeData));
   navigationQueue = xQueueCreate(1, sizeof(NavigationData));
@@ -235,7 +240,9 @@ void taskControl(void *pv){
 
     imu.update();
 
-    pid.setAngles(angle, attitudeData, nav, useNewValues); 
+    if(systemConfig.flightMode == FlightMode::FLIGHT){
+      pid.setAngles(angle, attitudeData, nav, useNewValues);
+    }
 
 
     elevator.write(angle.elevator);
@@ -293,7 +300,22 @@ void taskData(void *pv){
     if(gps.update()){led.green(); /*Serial.println("GPS Atualizado");*/} 
     else{led.blue();}
 
-  
+    if(systemConfig.flightMode == FlightMode::COUNTDOWN){
+
+        unsigned long elapsed = millis() - countdownStartMillis;
+
+        if(elapsed >= COUNTDOWN_DURATION_MS){
+            systemConfig.flightMode = FlightMode::FLIGHT;
+            wifi.setFlightMode(systemConfig.flightMode);
+            wifi.setCountdownRemaining(0);
+        }
+        else{
+            wifi.setCountdownRemaining(COUNTDOWN_DURATION_MS - elapsed);
+        }
+    }
+    else{
+        wifi.setCountdownRemaining(0);
+    }
 
     telemetry.update(buildTelemetryData(attitude));
 
@@ -301,16 +323,17 @@ void taskData(void *pv){
 
     handleOutputs(systemConfig.flightMode);//Sends LoRa Packets and registers logs in SD_Card, it update systemStatus.loraOk
 
-    if(systemConfig.flightMode != FlightMode::FLIGHT){
-
-
-      if(wifiEnabled){
-        handleWifi(attitude, navigationData);
-        updateGpsStatus();
-      }
-      else{      
-        handleWifiTimeout();
-      }
+    // Modo de voo "WiFi": o unico modo por enquanto mantem o WiFi
+    // ativo mesmo durante o FLIGHT, entao o AP continua respondendo
+    // (status, Finalizar Voo, telemetria) em vez de ficar mudo ate
+    // o pouso. Logs no SD e envio LoRa continuam de qualquer forma,
+    // isso e controlado em handleOutputs().
+    if(wifiEnabled){
+      handleWifi(attitude, navigationData);
+      updateGpsStatus();
+    }
+    else{
+      handleWifiTimeout();
     }
 
     vTaskDelayUntil(&lastWake, period);
@@ -399,6 +422,11 @@ void handleWifi(const AttitudeData& attitude, const NavigationData& navigationDa
                 systemConfig.flightMode
             );
 
+            sd.createFile();
+            sd.bufferLine(telemetry.getCsvHeader());
+
+            countdownStartMillis = millis();
+
             break;
 
         case SystemEvent::END_FLIGHT:
@@ -410,13 +438,54 @@ void handleWifi(const AttitudeData& attitude, const NavigationData& navigationDa
                 systemConfig.flightMode
             );
 
+            sd.flushBuffer();
+            sd.closeFile();
+
+            break;
+
+        case SystemEvent::DEACTIVATE_FLIGHT:
+
+            systemConfig.flightMode =
+                FlightMode::LANDED;
+
+            wifi.setFlightMode(
+                systemConfig.flightMode
+            );
+            sd.flushBuffer();
+            sd.closeFile();
+
+            break;
+
+        case SystemEvent::RESET_FLIGHT:
+
+            // Reativa o voo sem precisar reiniciar o ESP32: só
+            // permitido a partir de LANDED (checado no
+            // handleResetFlight() do WifiAP), volta pra CONFIG e
+            // libera offsets/PID/sistema/LoRa pra edicao de novo.
+            systemConfig.flightMode =
+                FlightMode::CONFIG;
+
+            wifi.setFlightMode(
+                systemConfig.flightMode
+            );
+
             break;
 
         case SystemEvent::CHECK_SD:
 
-            systemStatus.sdOk = sd.saveLine(
-                telemetry.getCsvHeader()
+            systemStatus.sdOk = sd.selfTest();
+
+            systemStatus.sdTested = true;
+
+            break;
+
+        case SystemEvent::CHECK_LORA:
+
+            systemStatus.loraOk = lora.send(
+                "TEST;PING"
             );
+
+            systemStatus.loraTested = true;
 
             break;
 
@@ -472,72 +541,40 @@ void handleWifi(const AttitudeData& attitude, const NavigationData& navigationDa
     wifi.clearPendingEvent();
 }
 void handleOutputs(FlightMode mode){
+
     bool lowPower = isLowPowerModeEnabled();
+    uint32_t period = lowPower? systemConfig.lowBatteryTelemetryPeriodMs : systemConfig.telemetryPeriodMs;
 
-    uint32_t period;
-    bool sendLora = true;
-    bool saveSd = false;
+    if(FlightMode::CONFIG == mode){
 
-    switch(mode)
-    {
-        case FlightMode::CONFIG:
+        if(systemConfig.preFlightTelemetryEnabled &&
+           millis() - lastTelemetryMillis >= period)
+        {
+            lastTelemetryMillis = millis();
 
-            period = systemConfig.telemetryPeriodMs;
+            systemStatus.loraOk = lora.send(telemetry.buildLoraPacket(lowPower));
+        }
+    }
+    else if(FlightMode::COUNTDOWN == mode || FlightMode::FLIGHT == mode){
 
-            sendLora = systemConfig.preFlightTelemetryEnabled; // futura função
 
-            break;
+        if(millis() - lastTelemetryMillis >= 100){
+            
+            lastTelemetryMillis = millis();
+            systemStatus.sdOk = sd.bufferLine(telemetry.buildCsv());
 
-        case FlightMode::COUNTDOWN:
+            if(millis() - lastTelemetryMillis >= period){
 
-            period = systemConfig.telemetryPeriodMs;
-
-            sendLora = true;
-            saveSd = true;
-            // nos últimos 5 s você muda esse período
-            // no código do countdown, não aqui.
-
-            break;
-
-        case FlightMode::FLIGHT:
-
-            period = lowPower
-                ? systemConfig.lowBatteryTelemetryPeriodMs
-                : systemConfig.telemetryPeriodMs;
-
-            sendLora = true;
-            saveSd = !lowPower;
-
-            break;
-
-        case FlightMode::LANDED:
-
-            period = systemConfig.lowBatteryTelemetryPeriodMs;
-
-            sendLora = true;
-            saveSd = false;
-
-            break;
+                lastTelemetryMillis = millis();
+                systemStatus.loraOk = lora.send(telemetry.buildLoraPacket(lowPower));
+            }
+        }
     }
 
-    if(millis() - lastTelemetryMillis < period)
-        return;
+    else if(FlightMode::LANDED == mode){
 
-    lastTelemetryMillis = millis();
-
-    if(sendLora)
-    {
-        systemStatus.loraOk =
-            lora.send(telemetry.buildLoraPacket(lowPower));
+        period = systemConfig.lowBatteryTelemetryPeriodMs;
     }
-
-    if(saveSd)
-    {
-        systemStatus.sdOk =
-            sd.saveLine(telemetry.buildCsv());
-    }
-
-    if(FlightMode::CONFIG == mode) {Serial.println(telemetry.buildLoraPacket(false));}
 }
 void sendNavigationData(NavigationData& navigationData){
     
