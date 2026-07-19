@@ -22,13 +22,13 @@ void PID::computePID(PID_variables& pid, ServoParamters& servo, float currentAng
     pid.lastError = pid.error;
 
     // 5. Cálculo do ângulo alvo baseado na saída do PID
-    servo.targetAngle = servo.neutralAngle + pid.output;
+    //servo.targetAngle = servo.neutralAngle + pid.output;
 
     // 6. Limitador de Taxa (Slew Rate) baseado no safeAngle do ciclo anterior
-    servo.safeAngle = constrain(servo.targetAngle, servo.safeAngle - maxMovement, servo.safeAngle + maxMovement);
+    //servo.safeAngle = constrain(servo.targetAngle, servo.safeAngle - maxMovement, servo.safeAngle + maxMovement);
 
     // 7. Limite de hardware físico gravado diretamente no setAngle do servo
-    servo.setAngle = constrain(servo.safeAngle, minLimit, maxLimit);
+    servo.setAngle = constrain(pid.output , minLimit, maxLimit);
 }
 
 void PID::setAngles(ServoPositions& angle, AttitudeData& attitudeData, NavigationData& nav, bool gpsData) {
@@ -53,7 +53,7 @@ void PID::setAngles(ServoPositions& angle, AttitudeData& attitudeData, Navigatio
     if (rightAileron.safeAngle == 0.0f) rightAileron.safeAngle = rightAileron.neutralAngle;
 
     // Configuração do Limitador de Taxa (Slew Rate)
-    const float MAX_VELOCITY_DEG_PER_SEC = 20.0f; 
+    const float MAX_VELOCITY_DEG_PER_SEC = 120.0f; 
     float maxMovementThisCycle = MAX_VELOCITY_DEG_PER_SEC * dt;
 
     //================ EXECUÇÃO DO PITCH (Profundor) =================
