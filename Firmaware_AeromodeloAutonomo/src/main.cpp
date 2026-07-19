@@ -121,6 +121,20 @@ void setup(){
   nvs.loadOffsets(currentOffsets);
   nvs.loadPid(currentPidConfig);
 
+  // Sem isso, o offset salvo nas Preferences so era realmente
+  // aplicado no calculo do angulo (localOffsets, dentro da task de
+  // controle) depois que o usuario salvasse um offset pela web --
+  // ate la, localOffsets ficava zerado mesmo com currentOffsets/
+  // /api/status ja reportando o valor salvo do boot anterior. Isso
+  // fazia a primeira tara depois de ligar somar o offset antigo (que
+  // NAO estava de fato sendo subtraido da leitura) com o novo valor
+  // calculado, dando um offset errado logo na primeira vez -- so
+  // acertava no segundo, quando o evento OFFSET_CHANGED sincronizava
+  // localOffsets pela primeira vez. Marcando newOffsetsAvailable aqui,
+  // a task de controle sincroniza localOffsets = currentOffsets logo
+  // na primeira iteracao do loop, antes de qualquer leitura ser usada.
+  newOffsetsAvailable = true;
+
   pid.pitch.kp = currentPidConfig.pitch.kp;
   pid.pitch.ki = currentPidConfig.pitch.ki;
   pid.pitch.kd = currentPidConfig.pitch.kd;
@@ -423,6 +437,29 @@ void handleWifi(const AttitudeData& attitude, const NavigationData& navigationDa
             );
 
             sd.createFile();
+
+            {
+                // Grava os ganhos de PID que estao REALMENTE em uso
+                // (pid.pitch/roll/yaw, o mesmo struct usado dentro de
+                // computePID) no inicio do voo, antes do header do
+                // CSV -- assim, se um voo se comportar estranho, da
+                // pra conferir depois exatamente qual Kp/Ki/Kd estava
+                // valendo naquele log, sem depender de lembrar (ou de
+                // confiar) qual config estava setada na hora.
+                char pidInfoLine[192];
+
+                snprintf(
+                    pidInfoLine,
+                    sizeof(pidInfoLine),
+                    "# PID pitch Kp=%.4f Ki=%.4f Kd=%.4f | roll Kp=%.4f Ki=%.4f Kd=%.4f | yaw Kp=%.4f Ki=%.4f Kd=%.4f",
+                    pid.pitch.kp, pid.pitch.ki, pid.pitch.kd,
+                    pid.roll.kp,  pid.roll.ki,  pid.roll.kd,
+                    pid.yaw.kp,   pid.yaw.ki,   pid.yaw.kd
+                );
+
+                sd.bufferLine(pidInfoLine);
+            }
+
             sd.bufferLine(telemetry.getCsvHeader());
 
             countdownStartMillis = millis();

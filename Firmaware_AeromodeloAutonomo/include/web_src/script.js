@@ -954,8 +954,10 @@ function fillLogs(files, currentLog = ""){
 
     // O ESP32 nao tem RTC, entao os arquivos em si nao guardam data
     // real -- isso aqui e so o horario do navegador de quem esta
-    // olhando a pagina agora, pra servir de referencia.
-    text("logsUpdated", "Lista atualizada em " + new Date().toLocaleString("pt-BR"));
+    // olhando a pagina agora, pra servir de referencia. Antes ficava
+    // como uma unica linha de "ultima atualizacao" embaixo da tabela;
+    // agora aparece embaixo de cada arquivo, igual ao resto da lista.
+    const referenceDate = new Date().toLocaleString("pt-BR");
 
     if(!files.length){
 
@@ -985,6 +987,7 @@ function fillLogs(files, currentLog = ""){
                 <td>
                     ${file}
                     ${inProgress ? '<br><span class="tag tag-warn">Em andamento</span>' : ""}
+                    <br><span class="logDate">${referenceDate}</span>
                 </td>
 
                 <td>

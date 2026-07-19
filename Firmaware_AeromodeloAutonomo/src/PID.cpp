@@ -63,4 +63,11 @@ void PID::setAngles(ServoPositions& angle, AttitudeData& attitudeData, Navigatio
 
     computePID(roll, leftAileron,  attitudeData.roll, dt, roll.integralLimit, maxMovementThisCycle, 20, 165);
     computePID(roll, rightAileron, attitudeData.roll, dt, roll.integralLimit, maxMovementThisCycle, 20, 165);
+
+    //================ REPASSA O RESULTADO PARA A STRUCT USADA PELOS SERVOS =================
+    // Sem isso, "angle" nunca sai dos valores padrao (90/90/90) e os servos
+    // ficam sempre no mesmo angulo, mesmo com o PID calculando corretamente.
+    angle.elevator     = elevator.setAngle;
+    angle.leftAileron  = leftAileron.setAngle;
+    angle.rightAileron = rightAileron.setAngle;
 }
