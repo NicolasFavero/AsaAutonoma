@@ -1,1 +1,8 @@
-asaAutonoma.ino 
+=======
+.pio/
+.pioenvs/
+.piolibdeps/
+.clang_complete
+.gcc-flags.json
+
+>>>>>>> Stashed changes
